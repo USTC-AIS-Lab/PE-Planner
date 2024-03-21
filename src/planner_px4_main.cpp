@@ -1,3 +1,6 @@
+#include <sys/ipc.h>
+#include <sys/shm.h>
+
 #include "numeric"
 
 #include "map/map.hpp"
@@ -6,6 +9,7 @@
 #include "kinodynamic_astar/kinodynamic_astar.hpp"
 #include "bspline/uniform_bspline.hpp"
 #include "bspline_opt/bspline_optimizer.hpp"
+#include "bspline_opt/bspline_optimizer2.hpp"
 #include "px4_interface/px4_interface.hpp"
 #include "mpcc/nominal_mpcc.hpp"
 #include "matplotlib/matplotlibcpp.hpp"
@@ -14,6 +18,7 @@
 #include "disturbance_observer/gpiobserver.hpp"
 #include "logger/logger.hpp"
 #include "tracker/pid_tracker.hpp"
+#include "utils.hpp"
 
 namespace plt = matplotlibcpp;
 
@@ -38,9 +43,31 @@ int main(int argc, char **argv) {
     cout << "mu: " << mu << endl;
     int test_num = atof(argv[7]);
     cout << "test_num: " << test_num << endl;
+    bool online_replan = atoi(argv[8]) == 1;
+    cout << "online replanning: " << (online_replan == true ? "ON" : "OFF") << endl;
 
     Logger logger(string(enable_dob == true ? "enable-DOB" : "disable-DOB") + "-"
         + string(enable_mpcc == true ? "enable-MPCC" : "disable-MPCC") + "-test");
+
+    key_t key;
+	int shmId;
+	int i = 0;
+	const char *path = "~/IPC";
+	key = ftok(path, 1);
+	if(key == -1)
+	{
+		cout << "ftok failed" << endl;
+	}
+	shmId = shmget(key, 0, 0);
+	cout << "shmId=" << shmId << endl;
+	if(shmId == -1)
+	{
+		cout << "shmget failed" << endl;
+	}
+	double* distur_set = (double*)shmat(shmId, NULL, 0);
+    distur_set[0] = 0.0;
+    distur_set[1] = 0.0;
+    distur_set[2] = 0.0;
 
     ros::init(argc, argv, "planner_px4");
 
@@ -57,7 +84,7 @@ int main(int argc, char **argv) {
     sleep(1);
     ros_inte.publish_grid_map(gridmap);
     
-    //construct SDF map
+    //construct sdf map
     SdfMap sdfmap(gridmap.resolution() / 1.0, gridmap);
     ros_inte.publish_sdf_map(sdfmap);
 
@@ -97,14 +124,15 @@ int main(int argc, char **argv) {
     //B-spline trajectory optimization
     BsplineOptimizer optimizer;
     vector<tuple<double, double, double, double, double, double>> cost_history;
+    
     if (enable_mpcc) {
         optimizer.optimize(ctrl_pts, start_pos,
-            Vector3d(0, 0, 0), goal_pos, 
-            Vector3d(0, 0, 0), &sdfmap, t_sample, 
+            Vector3d(0, 0, 0), Vector3d(0, 0, 0), goal_pos, 
+            Vector3d(0, 0, 0), Vector3d(0, 0, 0), &sdfmap, t_sample, 
             100.0,  //lambda_s
             100.0,   //lambda_c
-            0.0,    //lambda_v
-            0.0,    //lambda_a
+            0.1,    //lambda_v
+            0.1,    //lambda_a
             0.0,    //lambda_l
             0.1,      //lambda_dl 0.1
             100,   //lambda_ep
@@ -115,10 +143,10 @@ int main(int argc, char **argv) {
             MAX_ACC,    //acc_max 
             cost_history);
     } else {
-        t_sample *= 1.0;
+        //t_sample *= 1.5;
         optimizer.optimize(ctrl_pts, start_pos,
-            Vector3d(0, 0, 0), goal_pos, 
-            Vector3d(0, 0, 0), &sdfmap, t_sample, 
+            Vector3d(0, 0, 0), Vector3d(0, 0, 0), goal_pos, 
+            Vector3d(0, 0, 0), Vector3d(0, 0, 0), &sdfmap, t_sample,  
             100.0,  //lambda_s
             100.0,   //lambda_c
             0.1,    //lambda_v
@@ -171,6 +199,8 @@ int main(int argc, char **argv) {
 
     SdfMap sdfmap2(gridmap.resolution() / 1.0, gridmap);
     ros_inte.publish_sdf_map(sdfmap2);
+    
+    sleep(2);
 
     px4.set_px4_mode("AUTO.LOITER");
     sleep(1);
@@ -185,7 +215,19 @@ int main(int argc, char **argv) {
     double avg_min_dist = 0.;
     int fail_cnt = 0;
 
+#define TEST 1
+#if TEST
     for (int i = 0; i < test_num; i++) {
+#endif
+
+        vector<DynObs> dynobs;
+
+        for (double p = 5; p < 45; p += 2.0) {
+            dynobs.push_back(DynObs(0.2, 1.0, Vector2d(p, 3), Vector2d(p, 7)));
+        }
+
+        auto t0 = chrono::steady_clock::now();
+        
         double fan_ang = 0.;
         auto start_time = ros::Time::now();
         while((ros::Time::now() - start_time).toSec() < 6.0 && ros::ok()) {
@@ -195,11 +237,14 @@ int main(int argc, char **argv) {
             ros_inte.publish_pose(pos, quat);
             ros_inte.publish_quadmesh(pos, quat);
             auto p = UniformBspline::getBsplineValue(t_sample, ctrl_pts, 3 * t_sample + 1e-6, 3);
-            px4.set_pos(p[0], p[1], p[2], 0);
-            
+            px4.set_pos(p[0], p[1], p[2], 1.57);
             rate.sleep();
             ros_inte.publish_fanmesh(Vector3d(8.6, 4.0, 1.0), Vector3d(0, fan_ang, M_PI / 180.0 * 90.));
             fan_ang += M_PI / 180.0 * 10;
+            for (auto &o : dynobs) {
+                o.update(0.02);
+            }
+            ros_inte.publish_dyn_obs(dynobs);
             ros::spinOnce();
         }
         
@@ -215,12 +260,12 @@ int main(int argc, char **argv) {
         PidTracker pidtracker(Vector3d(2.5, 2.5, 2.5), Vector3d(2.5, 2.5, 2.5));
         NominalMpcc nominal_mpcc(0.309, "LD_AUGLAG", 300);
         Matrix<double, 3 + NominalMpcc::u_dim_ + 1 + NominalMpcc::u_dim_ + 1, 1> cost_w;
-        cost_w << 1.0, 50.0 //weight of contouring error and lag error
-                , mu * total_len / (ctrl_pts.rows() * t_sample - 3 * t_sample),//weight of progress
-                0.0000, 0.0000, 0.005, 0.0,//weight of control input
-                0,  //weight of the cost of violating distance constraints
-                0.1, 0.1, 0.1, 100.0,//weight of the difference of control input
-                75; //weight of the cost of violating CBF constraints
+        cost_w << 0.5, 50.0     //weight of contouring error and lag error
+                , mu * total_len / (ctrl_pts.rows() * t_sample - 3 * t_sample) //weight of progress
+                , 0.0000, 0.0000, 0.005, 0.1    //weight of control input
+                , 0     //weight of the cost of violating distance constraints
+                , 0.2, 0.2, 0.2, 200.0  //weight of the difference of control input
+                , 75;   //weight of the cost of violating CBF constraints
         nominal_mpcc.set_w(cost_w);
         Matrix<double, NominalMpcc::x_dim_, 1> state;
         Matrix<double, n_step, NominalMpcc::u_dim_> u;
@@ -261,9 +306,13 @@ int main(int argc, char **argv) {
         u_opt.setZero();
         u_opt(3) = 0.309;
         double solve_t;
+        double distur_time_total = 1.0 / 0.02;
+        double distur_time = distur_time_total;
+        Vector3d acc_r(0, 0, 0);
         int loop_cnt = 0;
         ros::Time past_vel_stamp = ros::Time::now();
         while (ros::ok()) {
+            // cout << "new loop" << endl;
             Vector3d pos = px4.pos();
             Vector3d vel = px4.vel();
             Vector3d acc_b = px4.acc();
@@ -276,11 +325,14 @@ int main(int argc, char **argv) {
             state << pos, vel, quat.w(), quat.x(), quat.y(), quat.z();
 #endif
 
+            // quaddynamic.xdot_func(state, u_opt, sim_xdot);
+
             Vector3d ang = quaternion_to_rpy(Quaterniond(quat.w(), quat.x(), quat.y(), quat.z()));
             auto b_e_matrix = Quaterniond(quat.w(), quat.x(), quat.y(), quat.z()).toRotationMatrix();
             Vector3d acc = b_e_matrix * acc_b - Vector3d(0, 0, 9.81);
 
             dob.update(vel, b_e_matrix, u_opt[3] * 9.81 / 0.309/*1.084e-5 * pow(u_opt[3] * 1000 + 100, 2) * 4 / 0.74*/, (vel_stamp - past_vel_stamp).toSec());
+            // cout << vel.transpose() << " " << (vel_stamp - past_vel_stamp).toSec() << " " << dob.get_dhat().transpose() << " " << dob.get_dhat().norm() << endl;
             dob_vx_list.push_back(dob.get_vhat().x());
             dob_vy_list.push_back(dob.get_vhat().y());
             dob_vz_list.push_back(dob.get_vhat().z());
@@ -288,7 +340,7 @@ int main(int argc, char **argv) {
             dob_dy_list.push_back(dob.get_dhat().y());
             dob_dz_list.push_back(dob.get_dhat().z());
 
-            dis_to_obs.push_back(sdfmap.get_dist_with_grad_trilinear(pos).first);
+            dis_to_obs.push_back(min(sdfmap.get_dist_with_grad_trilinear(pos).first, get_dis_to_dynobs(dynobs, pos)));
             dis_to_obs_sim.push_back(sdfmap.get_dist_with_grad_trilinear(Vector3d(sim_state1.block(0, 0, 3, 1))).first);
             dis_to_obs_sim2.push_back(sdfmap.get_dist_with_grad_trilinear(Vector3d(sim_state2.block(0, 0, 3, 1))).first);
             if (sdfmap.get_dist_with_grad_trilinear(pos).first < 0.3) {
@@ -302,6 +354,7 @@ int main(int argc, char **argv) {
             mean_nominal_v_norm_err += fabs((vel - nominal_sim_state1.block(3, 0, 3, 1)).norm());
             mean_p_err += fabs((pos - sim_state1.block(0, 0, 3, 1)).norm());
             mean_nominal_p_err += fabs((pos - nominal_sim_state1.block(0, 0, 3, 1)).norm());
+            // cout << (pos - sim_state1.block(0, 0, 3, 1)).norm() << " " << (pos - nominal_sim_state1.block(0, 0, 3, 1)).norm() << endl;
             acc_list.push_back(acc.norm());
             acc_x_list.push_back(acc.x());
             acc_y_list.push_back(acc.y());
@@ -344,9 +397,92 @@ int main(int argc, char **argv) {
             logger.tilt_ = acos(cos(ang.x())*cos(ang.y())) * 180.0 / M_PI;
             logger.disturbance_ = dob.get_dhat();
             logger.u_ = u_opt;
-            logger.dis_to_obs_ = sdfmap.get_dist_with_grad_trilinear(pos).first;
+            logger.dis_to_obs_ = min(sdfmap.get_dist_with_grad_trilinear(pos).first, get_dis_to_dynobs(dynobs, pos));
             logger.solution_time_ = solve_t;
             logger.time_ = (ros::Time::now() - start_time).toSec();
+
+            if (online_replan) {
+                auto time_ = chrono::steady_clock::now();
+                //global planner
+                kino_astar.set_param(
+                    10., //w_time 2.5
+                    MAX_VEL,  //max_vel
+                    MAX_ACC,  //max_acc
+                    1.0 + 1.0 / 10000, //tie_breaker
+                    1 / 2.0,  //acc_resolution
+                    1 / 1.0,      //time_resolution
+                    0.6,      //max_duration
+                    1 / 50.,   //safety_check_res
+                    5.0);     //lamda_heu
+                Vector3d vel_limed;
+                vel_limed = vel / (vel - Vector3d(MAX_VEL, MAX_VEL, MAX_VEL)).cwiseAbs().maxCoeff() * MAX_VEL;
+                kino_astar.search(
+                    pos,
+                    vel_limed,
+                    goal_pos,
+                    Vector3d(0., 0., 0.),
+                    &dynobs);
+                t_sample = 0.2;
+                auto kino_path = kino_astar.get_sample_path(t_sample);
+                kino_path.first.push_back(goal_pos);
+                ros_inte.publish_kino_traj(kino_path.first);
+                
+                //trajectory parameterization
+                vector<Vector3d> vels, accs;
+                vels.push_back(Vector3d::Zero());
+                vels.push_back(Vector3d::Zero());
+                accs.push_back(Vector3d::Zero());
+                accs.push_back(Vector3d::Zero());
+                UniformBspline::parameter2Bspline(t_sample, kino_path.first, vels, accs, ctrl_pts);
+
+                //B-spline trajectory optimization
+                BsplineOptimizer optimizer;
+                vector<tuple<double, double, double, double, double, double>> cost_history;
+                if (ctrl_pts.size() <= 12) {
+                    break;
+                }
+                MatrixXd new_ctrl_pts;
+                Vector3d tmp_goal = goal_pos;
+                if (ctrl_pts.rows() > 10) {
+                    new_ctrl_pts = ctrl_pts.block(0, 0, 10, ctrl_pts.cols());
+                    ctrl_pts = new_ctrl_pts;
+                    tmp_goal = UniformBspline::getBsplineValue(t_sample, ctrl_pts, ctrl_pts.rows() * t_sample - 1e-3, 3);
+                }
+                optimizer.optimize(ctrl_pts, pos,
+                    vel, acc_r, tmp_goal,
+                    Vector3d(0, 0, 0), Vector3d(0, 0, 0), &sdfmap, t_sample, 
+                    100.0,  //lambda_s
+                    5000.0,   //lambda_c
+                    10.,    //lambda_v
+                    0.1,    //lambda_a
+                    0.0,    //lambda_l
+                    0.0,      //lambda_dl 0.1
+                    10000,   //lambda_ep
+                    100,   //lambda_ev 100
+                    0,   //lambda_ea 10
+                    0.4,   //risk_dis
+                    MAX_VEL,    //vel_max
+                    MAX_ACC,    //acc_max 
+                    cost_history,
+                    &dynobs);
+                v_ctrl_pts = UniformBspline::getDerivativeCtrlPts(ctrl_pts, t_sample);
+                a_ctrl_pts = UniformBspline::getDerivativeCtrlPts(v_ctrl_pts, t_sample);
+                vector<Vector3d> opt_bsp_p, opt_bsp_v, opt_bsp_a;
+                vector<double> opt_t_list;
+                for (double t = 3 * t_sample; t < ctrl_pts.rows() * t_sample + 1e-6; t += t_sample * 1) {
+                    auto p = UniformBspline::getBsplineValue(t_sample, ctrl_pts, t, 3);
+                    auto v = UniformBspline::getBsplineValue(t_sample, v_ctrl_pts, t - t_sample, 2);
+                    auto a = UniformBspline::getBsplineValue(t_sample, a_ctrl_pts, t - t_sample - t_sample, 1);
+                    opt_bsp_p.push_back(p);
+                    opt_bsp_v.push_back(v);
+                    opt_bsp_a.push_back(a);
+                    opt_t_list.push_back(t);
+                }
+                ros_inte.publish_bspline_traj(opt_bsp_p);
+                double spend = chrono::duration<double>(chrono::steady_clock::now() - time_).count();
+                // cout << "spend: " << spend * 1e3 << " ms" << endl;
+                solve_times.push_back(spend);
+            }
 
             if (enable_mpcc) {
                 //MPCC
@@ -356,7 +492,8 @@ int main(int argc, char **argv) {
                     t_sample,
                     total_len,
                     u_opt,
-                    enable_dob ? dob.get_dhat() : Vector3d(0., 0., 0.),
+                    (enable_dob && dob.get_dhat().norm() < 15) ? dob.get_dhat() : Vector3d(0., 0., 0.),
+                    dynobs,
                     u, x_predict,
                     t_index, solve_t);
                 
@@ -367,6 +504,11 @@ int main(int argc, char **argv) {
                 }
                 ros_inte.publish_predict_traj(predict_traj);
 
+                // cout << t_index.transpose() << endl;
+                // cout << ctrl_pts.rows() * t_sample << endl;
+                
+                // cout << "u:" << endl << u << endl;
+                // cout << "x_predict:" << endl << x_predict << endl;
                 u_opt = u.row(0);
 #if USE_EXTENDED_DYNAMICS
                 u_opt(3) = x_predict(0, 10);
@@ -377,6 +519,9 @@ int main(int argc, char **argv) {
             } else {
                 solve_times.push_back(0);
                 double t = loop_cnt * 0.02;
+                if (online_replan) {
+                    t = 0.02;
+                }
                 if (t > t_sample * (ctrl_pts.rows() - 3)) {
                     t = t_sample * (ctrl_pts.rows() - 3);
                     if (reach_cnt-- < 0)
@@ -385,6 +530,7 @@ int main(int argc, char **argv) {
                 Vector3d pd = UniformBspline::getBsplineValueFast<Vector3d>(t_sample, ctrl_pts, t + t_sample * 3, 3);
                 Vector3d vd = UniformBspline::getBsplineValueFast<Vector3d>(t_sample, v_ctrl_pts, t + t_sample * 2, 2);
                 Vector3d ad = UniformBspline::getBsplineValueFast<Vector3d>(t_sample, a_ctrl_pts, t + t_sample * 1, 1);
+                acc_r = ad;
                 auto ret = pidtracker.calculate_control(
                     pd, vd, ad, pos, vel, Quaterniond(quat.w(), quat.x(), quat.y(), quat.z())
                 );
@@ -401,15 +547,31 @@ int main(int argc, char **argv) {
             quaddynamic.xdot_func(state, u_opt, Vector3d(0, 0, 0), nominal_sim_xdot);
             quaddynamic.rk4_func(state, u_opt, Vector3d(0, 0, 0), 0.02, nominal_sim_state1);
 
-	        ros_inte.publish_pose(pos, quat);
             ros_inte.publish_quadmesh(pos, quat);
             ros_inte.publish_mpcc_traj(mpcc_traj);
+            ros_inte.publish_pose(pos, quat);
             // ros_inte.publish_collision(collision_pos);
-            
+
+            for (auto &o : dynobs) {
+                // o.update((vel_stamp - past_vel_stamp).toSec());
+                o.update(0.02);
+            }
+            ros_inte.publish_dyn_obs(dynobs);
 
             logger.update();
 
-            // rate.sleep();
+            if (pos.x() > 30.0 && distur_time > 0) {//(pos.x() > 30.0 && distur_time > 0) {
+                distur_set[0] = 0.0;//min(1.0, distur_set[0] + 0.2);
+                distur_set[1] = 0.0;//min(1.0, distur_set[1] + 0.2);
+                distur_set[2] = 0.0;
+                distur_time--;
+            } else {
+                distur_set[0] = 0.0;//max(0.0, distur_set[0] - 0.2);
+                distur_set[1] = 0.0;//max(0.0, distur_set[1] - 0.2);
+                distur_set[2] = 0.0;
+            }
+
+            rate.sleep();
             past_vel_stamp = vel_stamp;
             ros::spinOnce();
 
@@ -467,8 +629,10 @@ int main(int argc, char **argv) {
             fan_ang += M_PI / 180.0 * 10;
             ros::spinOnce();
         }
-        cout << "test num: " << i << endl;
+#if TEST
+        cout << "test num: " << i << " fail_cnt: " << fail_cnt << endl;
     }
+#endif
 
     px4.set_px4_mode("POSCTL");
 
@@ -477,7 +641,7 @@ int main(int argc, char **argv) {
     cout << "avg_min_dist: " << avg_min_dist / (test_num - fail_cnt) << endl;
     cout << "success rate: " << 1 - (double)fail_cnt / test_num << endl;
     
-#if 0
+#if !TEST
     ros_inte.publish_mpcc_traj(mpcc_traj);
     
     plt::figure(3);
@@ -494,7 +658,7 @@ int main(int argc, char **argv) {
     plt::plot(t_list, r_list, {{"color", "green"}, {"linestyle", "-"}, {"label", "roll"}});
     plt::plot(t_list, p_list, {{"color", "red"}, {"linestyle", "-"}, {"label", "pitch"}});
     plt::plot(t_list, y_list, {{"color", "blue"}, {"linestyle", "-"}, {"label", "yaw"}});
-    plt::plot(t_list, tilt_list, {{"color", "gold"}, {"linestyle", "-"}, {"label", "tilt"}});
+    plt::plot(t_list, tilt_list, {{"color", "gold"}, {"linestyle", "-"}, {"label", "tilt angle"}});
     plt::xlabel("t(s)");
     plt::ylabel("angle(degree)");
     plt::ylim(-180, 180);
@@ -515,8 +679,8 @@ int main(int argc, char **argv) {
 
     plt::figure(6);
     plt::plot(t_list, dis_to_obs, {{"color", "green"}, {"linestyle", "-"}, {"label", "real"}});
-    plt::plot(t_list, dis_to_obs_sim, {{"color", "red"}, {"linestyle", "-"}, {"label", "sim_dt=0.02"}});
-    plt::plot(t_list, dis_to_obs_sim2, {{"color", "blue"}, {"linestyle", "-"}, {"label", "sim_dt=0.1"}});
+    // plt::plot(t_list, dis_to_obs_sim, {{"color", "red"}, {"linestyle", "-"}, {"label", "sim_dt=0.02"}});
+    // plt::plot(t_list, dis_to_obs_sim2, {{"color", "blue"}, {"linestyle", "-"}, {"label", "sim_dt=0.1"}});
     plt::xlabel("t(s)");
     plt::ylabel("distance to nearest obstacle(m)");
     plt::ylim(0., 0.4);
@@ -556,12 +720,12 @@ int main(int argc, char **argv) {
     plt::legend();
 
     plt::figure(11);
-    plt::plot(t_list, nominal_acc_x_err_list, {{"color", "green"}, {"linestyle", "-"}, {"label", "x"}});
-    plt::plot(t_list, nominal_acc_y_err_list, {{"color", "red"}, {"linestyle", "-"}, {"label", "y"}});
-    plt::plot(t_list, nominal_acc_z_err_list, {{"color", "blue"}, {"linestyle", "-"}, {"label", "z"}});
-    plt::plot(t_list, dob_dx_list, {{"color", "green"}, {"linestyle", "--"}, {"label", "x_hat"}});
-    plt::plot(t_list, dob_dy_list, {{"color", "red"}, {"linestyle", "--"}, {"label", "y_hat"}});
-    plt::plot(t_list, dob_dz_list, {{"color", "blue"}, {"linestyle", "--"}, {"label", "z_hat"}});
+    // plt::plot(t_list, nominal_acc_x_err_list, {{"color", "green"}, {"linestyle", "-"}, {"label", "x"}});
+    // plt::plot(t_list, nominal_acc_y_err_list, {{"color", "red"}, {"linestyle", "-"}, {"label", "y"}});
+    // plt::plot(t_list, nominal_acc_z_err_list, {{"color", "blue"}, {"linestyle", "-"}, {"label", "z"}});
+    plt::plot(t_list, dob_dx_list, {{"color", "green"}, {"linestyle", "-"}, {"label", "x"}});
+    plt::plot(t_list, dob_dy_list, {{"color", "red"}, {"linestyle", "-"}, {"label", "y"}});
+    plt::plot(t_list, dob_dz_list, {{"color", "blue"}, {"linestyle", "-"}, {"label", "z"}});
     plt::xlabel("t(s)");
     plt::ylabel("disturbance acceleration(m/s^2)");
     plt::ylim(-10, 10);

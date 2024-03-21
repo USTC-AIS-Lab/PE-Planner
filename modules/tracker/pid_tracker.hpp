@@ -47,7 +47,7 @@ public:
         double yaw_odom = fromQuaternion2yaw(q);
         double sin = std::sin(yaw_odom);
         double cos = std::cos(yaw_odom);
-        roll = (des_acc(0) * sin - des_acc(1) * cos) / 9.81; //assume small angle (arctan(x)=x)
+        roll = (des_acc(0) * sin - des_acc(1) * cos) / 9.81; //小角度假设（arctan(x)=x）
         pitch = (des_acc(0) * cos + des_acc(1) * sin) / 9.81;
         Eigen::Quaterniond qd = Eigen::AngleAxisd(yaw_odom,Eigen::Vector3d::UnitZ())
             * Eigen::AngleAxisd(pitch,Eigen::Vector3d::UnitY())

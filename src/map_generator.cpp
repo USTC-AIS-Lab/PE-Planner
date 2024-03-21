@@ -18,6 +18,7 @@ int main(int argc, char **argv) {
     double max_radius = 0.3;
     double min_radius = 0.2;
 
+    //构造地图
     GridMap gridmap(0.05, map_size);
 
     random_device rd;
@@ -32,6 +33,7 @@ int main(int argc, char **argv) {
             double y = rand_y(eng);
             double r = rand_r(eng);
 
+            // cout << x << " " << y << " " << r << endl;
             if (x + r > map_size(0) - 2 || x - r < 2) {
                 continue;
             }
@@ -60,8 +62,10 @@ int main(int argc, char **argv) {
 
     gridmap.update_grid_map();
 
+    //构建SDF地图
     SdfMap sdfmap(gridmap.resolution() / 1.0, gridmap);
 
+    //ros接口
     RosInterface ros_inte(gridmap.size());
     sleep(1);
     ros_inte.publish_grid_map(gridmap);

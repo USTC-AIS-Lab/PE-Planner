@@ -3,6 +3,7 @@
 
 #include "bspline_optimizer.hpp"
 #include "lbfgs/lbfgs.hpp"
+#include "bspline/uniform_bspline.hpp"
 
 using namespace std;
 using namespace Eigen;
@@ -10,6 +11,11 @@ using namespace Eigen;
 inline double BsplineOptimizer::cost_function(BsplineOptimizer *instance, const VectorXd &x, VectorXd &g) {
     for (int i = 0; i < g.rows(); i++) {
         g(i) = 0;
+    }
+    for (int i = 0; i < instance->ctrl_pts_->rows(); i++) {
+        for (int j = 0; j < instance->ctrl_pts_->cols(); j++) {
+            instance->ctrl_pts_->operator()(i, j) = x(i * 3 + j);
+        }
     }
     int N = x.rows() / 3;
     double scost = 0.0;
@@ -44,6 +50,40 @@ inline double BsplineOptimizer::cost_function(BsplineOptimizer *instance, const 
                 * instance->lamda_c_;
             g(i * 3 + 2) += 2 * (dis - instance->risk_dis_) * grad.z()
                 * instance->lamda_c_;
+        }
+    }
+    if (instance->dynobs_) {
+        for (double t = 3 * instance->ts_;
+            t < ((3 * instance->ts_ + 4.0) < (N * instance->ts_) ? (3 * instance->ts_ + 4.0) : (N * instance->ts_));
+            t += 0.05) {
+            Vector3d tmp;
+            Vector4d grad2;
+            int idx;
+            auto p = UniformBspline::getBsplineValueFast(instance->ts_, *(instance->ctrl_pts_), t, 3, &tmp, &grad2, &idx);
+            for (auto &o : *instance->dynobs_) {
+                double dis;
+                Vector3d grad;
+                o.get_dis_ellipsoid2(p, t - 3 * instance->ts_, &dis, &grad);
+                if (dis > 0.4) {
+
+                } else {
+                    // cout << dis << endl;
+                    ccost += (0.4 - dis)
+                        * instance->lamda_c_;
+                    for (int i = 0; i < 4; i++) {
+                        g((idx + i) * 3) += -grad.x() * grad2(i)
+                            * instance->lamda_c_;
+                        g((idx + i) * 3 + 1) += -grad.y() * grad2(i)
+                            * instance->lamda_c_;
+                        g((idx + i) * 3 + 2) += -grad.z() * grad2(i)
+                            * instance->lamda_c_;
+                    }
+                }
+            }
+            ccost += pow(p.z() - 1.1, 2) * instance->lamda_c_ * 0.01;
+            for (int i = 0; i < 4; i++) {
+                g((idx + i) * 3 + 2) += 2 * (p.z() - 1.1) * grad2(i) * instance->lamda_c_ * 0.01;
+            }
         }
     }
     double vcost = 0.0;
@@ -119,7 +159,7 @@ inline double BsplineOptimizer::cost_function(BsplineOptimizer *instance, const 
                 / pow(instance->ts_, 2) * instance->lamda_a_;
         }
     }
-    double mean_pdis = 0.0; //mean distance between control points
+    double mean_pdis = 0.0;
     VectorXd mean_pdis_g(g.size());
     mean_pdis_g.setZero();
     // for (int i = 0; i < N - 1; i++) {
@@ -178,7 +218,6 @@ inline double BsplineOptimizer::cost_function(BsplineOptimizer *instance, const 
     }
     double lcost = instance->lamda_l_ * mean_pdis * (N - 2);
     g += instance->lamda_l_ * mean_pdis_g * (N - 2);
-    //cost of start and end point
     double ecost = 0.0;
     {
         {
@@ -237,9 +276,9 @@ inline double BsplineOptimizer::cost_function(BsplineOptimizer *instance, const 
         }
         {
             double t2 = instance->ts_ * instance->ts_;
-            double dx = (x(0) - 2 * x(3 + 0) + x(2 * 3 + 0)) / t2;
-            double dy = (x(1) - 2 * x(3 + 1) + x(2 * 3 + 1)) / t2;
-            double dz = (x(2) - 2 * x(3 + 2) + x(2 * 3 + 2)) / t2;
+            double dx = (x(0) - 2 * x(3 + 0) + x(2 * 3 + 0)) / t2 - instance->start_a_(0);
+            double dy = (x(1) - 2 * x(3 + 1) + x(2 * 3 + 1)) / t2 - instance->start_a_(1);
+            double dz = (x(2) - 2 * x(3 + 2) + x(2 * 3 + 2)) / t2 - instance->start_a_(2);
             ecost += (dx * dx + dy * dy + dz * dz) * instance->lamda_ea_;
             g(0) += 2 * dx / t2 * instance->lamda_ea_;
             g(1) += 2 * dy / t2 * instance->lamda_ea_;
@@ -253,9 +292,9 @@ inline double BsplineOptimizer::cost_function(BsplineOptimizer *instance, const 
         }
         {
             double t2 = instance->ts_ * instance->ts_;
-            double dx = (x((N - 3) * 3 + 0) - 2 * x((N - 2) * 3 + 0) + x((N - 1) * 3 + 0)) / t2;
-            double dy = (x((N - 3) * 3 + 1) - 2 * x((N - 2) * 3 + 1) + x((N - 1) * 3 + 1)) / t2;
-            double dz = (x((N - 3) * 3 + 2) - 2 * x((N - 2) * 3 + 2) + x((N - 1) * 3 + 2)) / t2;
+            double dx = (x((N - 3) * 3 + 0) - 2 * x((N - 2) * 3 + 0) + x((N - 1) * 3 + 0)) / t2 - instance->end_a_(0);
+            double dy = (x((N - 3) * 3 + 1) - 2 * x((N - 2) * 3 + 1) + x((N - 1) * 3 + 1)) / t2 - instance->end_a_(1);
+            double dz = (x((N - 3) * 3 + 2) - 2 * x((N - 2) * 3 + 2) + x((N - 1) * 3 + 2)) / t2 - instance->end_a_(2);
             ecost += (dx * dx + dy * dy + dz * dz) * instance->lamda_ea_;
             g((N - 3) * 3 + 0) += 2 * dx / t2 * instance->lamda_ea_;
             g((N - 3) * 3 + 1) += 2 * dy / t2 * instance->lamda_ea_;
@@ -274,14 +313,15 @@ inline double BsplineOptimizer::cost_function(BsplineOptimizer *instance, const 
 }
 
 int BsplineOptimizer::optimize(MatrixXd &ctrl_pts
-    , const Vector3d &start_p, const Vector3d &start_v
-    , const Vector3d &end_p, const Vector3d &end_v
+    , const Vector3d &start_p, const Vector3d &start_v, const Vector3d &start_a
+    , const Vector3d &end_p, const Vector3d &end_v, const Vector3d &end_a
     , const SdfMap *const sdf, const double ts
     , const double lamda_s, const double lamda_c, const double lamda_v
     , const double lamda_a, const double lamda_l, const double lamda_dl
     , const double lamda_ep, const double lamda_ev, const double lamda_ea
     , const double risk_dis, const double vmax
-    , const double amax, vector<tuple<double, double, double, double, double, double>> &cost_history) {
+    , const double amax, vector<tuple<double, double, double, double, double, double>> &cost_history
+    , const vector<DynObs> *dynobs) {
     VectorXd x = VectorXd::Zero(ctrl_pts.rows() * ctrl_pts.cols());
     for (int i = 0; i < ctrl_pts.rows(); i++) {
         for (int j = 0; j < ctrl_pts.cols(); j++) {
@@ -289,6 +329,7 @@ int BsplineOptimizer::optimize(MatrixXd &ctrl_pts
         }
     }
     sdf_map_ = sdf;
+    dynobs_ = dynobs;
     ts_ = ts;
     lamda_s_ = lamda_s;
     lamda_c_ = lamda_c;
@@ -302,16 +343,19 @@ int BsplineOptimizer::optimize(MatrixXd &ctrl_pts
     risk_dis_ = risk_dis;
     start_p_ = start_p;
     start_v_ = start_v;
+    start_a_ = start_a;
     end_p_ = end_p;
     end_v_ = end_v;
+    end_a_ = end_a;
     vmax_ = vmax;
     amax_ = amax;
+    ctrl_pts_ = &ctrl_pts;
 
     lbfgs::lbfgs_parameter_t params;
     params.g_epsilon = 1.0e-10;
     params.past = 3;
-    params.delta = 1.0e-10;
-    params.mem_size = 128;
+    params.delta = 1.0e-6;
+    params.mem_size = 8;
     params.max_linesearch = 128;
 
     double final_cost = 0.0;
@@ -328,10 +372,10 @@ int BsplineOptimizer::optimize(MatrixXd &ctrl_pts
     double spend = chrono::duration<double>(chrono::steady_clock::now() - time_).count();
     cost_history = cost_history_;
 
-    cout << fixed << setprecision(4)
-        << "L-BFGS Optimization Returned: " << ret << endl
-        << "B-spline optimization spend " << spend * 1e3 << " ms" << endl
-        << "Minimized Cost: " << final_cost << endl;
+    // cout << fixed << setprecision(4)
+    //     << "L-BFGS Optimization Returned: " << ret << endl
+    //     << "B-spline optimization spend " << spend * 1e3 << " ms" << endl
+    //     << "Minimized Cost: " << final_cost << endl;
     
     for (int i = 0; i < ctrl_pts.rows(); i++) {
         for (int j = 0; j < ctrl_pts.cols(); j++) {

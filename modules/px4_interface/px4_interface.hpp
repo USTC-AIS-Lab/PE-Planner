@@ -21,11 +21,13 @@ using namespace Eigen;
 
 class Px4Interface {
 private:
+    //订阅状态信息来源
     ros::Subscriber pose_sub_;
     ros::Subscriber vel_sub_;
     ros::Subscriber acc_sub_;
     ros::Subscriber rate_sub_;
     ros::Subscriber px4_state_sub_;
+    //指令话题
     ros::Publisher pos_target_pub_;
     ros::Publisher att_target_pub_;
     ros::ServiceClient px4_mode_srv_;

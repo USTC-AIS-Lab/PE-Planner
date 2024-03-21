@@ -162,22 +162,10 @@ bool KinodynamicAstar::computeShotTraj(Eigen::VectorXd state1, Eigen::VectorXd s
 }
 
 bool KinodynamicAstar::search(Vector3d start_pt, Vector3d start_v,
-    Vector3d end_pt, Vector3d end_v) {
-    NodeInfo *nodeinfos = new NodeInfo[map_grid_size_(2) * map_grid_size_(1) * map_grid_size_(0)];
-#define nodeinfos(x, y, z) nodeinfos[z * map_grid_size_(1) * map_grid_size_(0) + y * map_grid_size_(0) + x]
-    for (int i = 0; i < map_grid_size_(2); i++) {
-        for (int j = 0; j < map_grid_size_(1); j++) {
-            for (int k = 0; k < map_grid_size_(0); k++) {
-                nodeinfos(k, j, i).grid_idx_ = Vector3i(k, j, i);
-                nodeinfos(k, j, i).f_cost_ = 0;
-                nodeinfos(k, j, i).g_cost_ = 0;
-                nodeinfos(k, j, i).time_ = 0;
-                nodeinfos(k, j, i).parent_ = nullptr;
-                nodeinfos(k, j, i).visited_ = 0;
-            }
-        }
-    }
+    Vector3d end_pt, Vector3d end_v,
+    const vector<DynObs> *dynobs) {
     auto t0 = chrono::steady_clock::now();
+    memset(nodevisited_, 0, map_grid_size_(2) * map_grid_size_(1) * map_grid_size_(0));
     priority_queue<SearchNodePtr, vector<SearchNodePtr>, SearchNode::SearchNodeComparator> openset;
     vector<SearchNodePtr> nodeset;
     Vector3i end_idx = pos2idx(end_pt);
@@ -186,7 +174,7 @@ bool KinodynamicAstar::search(Vector3d start_pt, Vector3d start_v,
     SearchNodePtr node = new SearchNode(
         start_idx, nodeinfos(start_idx.x(), start_idx.y(), start_idx.z())
         , 0, 0, start_pt, start_v, Vector3d(0., 0., 0.), 0, 0, nullptr);
-    nodeinfos(start_idx.x(), start_idx.y(), start_idx.z()).visited_ = 1;
+    *nodeinfos(start_idx.x(), start_idx.y(), start_idx.z()).visited_ = 1;
     nodeset.push_back(node);
     openset.push(node);
 
@@ -202,15 +190,15 @@ bool KinodynamicAstar::search(Vector3d start_pt, Vector3d start_v,
             }
             node = openset.top();
             openset.pop();
-        } while(node->info_.visited_ != 1);
-        node->info_.visited_ = -1;
+        } while(*node->info_.visited_ != 1);
+        *node->info_.visited_ = -1;
         double time = node->info_.time_;
         Vector3d deltap = end_pt - node->info_.pos_;
         Vector3d deltav = end_v - node->info_.vel_;
 
         bool is_nearest = false;
         
-        if (deltap.squaredNorm() < pow(0.3, 2)
+        if (deltap.squaredNorm() < pow(0.6, 2)
             /*fabs(deltap(0)) < 0.2 && fabs(deltap(1)) < 0.2 && fabs(deltap(2)) < 0.2*/
             /*&& fabs(deltav(0)) < 1.0 && fabs(deltav(1)) < 1.0 && fabs(deltav(2)) < 1.0*/) {
             // double time_to_goal = 0.;
@@ -226,11 +214,12 @@ bool KinodynamicAstar::search(Vector3d start_pt, Vector3d start_v,
 
         if (is_nearest) {
             auto t1 = chrono::steady_clock::now();
-            cerr << "Kinodynamic A* find avaliable path, spend " << chrono::duration<double>(t1 - t0).count() * 1e3 << "ms" << ", final cost: " << node->f_cost_ << endl;
+            // cerr << "Kinodynamic A* find avaliable path, spend " << chrono::duration<double>(t1 - t0).count() * 1e3 << "ms" << ", final cost: " << node->f_cost_ << endl;
             end_node = node;
             break;
         }
 
+        //运动原语
         vector<Vector3d> inputs;
         vector<double> durations;
         for (double ax = -max_acc_; ax < max_acc_ + 1e-7; ax += max_acc_ * acc_resolution_) {
@@ -248,6 +237,7 @@ bool KinodynamicAstar::search(Vector3d start_pt, Vector3d start_v,
 
         for (auto &input : inputs) {
             for (auto &tau : durations) {
+                //状态转移
                 Vector3d new_pos, new_vel;
                 stateTransit(node->info_.pos_, node->info_.vel_, new_pos, new_vel, input, tau);
                 double new_time = time + tau;
@@ -256,15 +246,17 @@ bool KinodynamicAstar::search(Vector3d start_pt, Vector3d start_v,
                     continue;
                 }
                 
+                //检查是否在closeset
                 Vector3i new_idx = pos2idx(new_pos);
                 if (new_idx == node->grid_idx_) {
                     continue;
                 }
-                if (nodeinfos(new_idx(0), new_idx(1), new_idx(2)).visited_ == -1) {
+                if (*nodeinfos(new_idx(0), new_idx(1), new_idx(2)).visited_ == -1) {
                     continue;
                 }
 
-                if (fabs(new_vel(0)) > max_vel_ || fabs(new_vel(1)) > max_vel_ || fabs(new_vel(2)) > max_vel_) {
+                //安全检查
+                if ((fabs(new_vel(0)) > max_vel_ || fabs(new_vel(1)) > max_vel_ || fabs(new_vel(2)) > max_vel_)) {
                     continue;
                 }
                 bool safe = true;
@@ -275,11 +267,22 @@ bool KinodynamicAstar::search(Vector3d start_pt, Vector3d start_v,
                         safe = false;
                         break;
                     }
+                    if (dynobs) {
+                        for (auto &o : *dynobs) {
+                            double dis = 0.0;
+                            o.get_dis_ellipsoid(p, time + t, &dis);
+                            if (dis < 0) {
+                                safe = false;
+                                break;
+                            }
+                        }
+                    }
                 }
                 if (!safe) {
                     continue;
                 }
                 
+                //计算代价
                 double gcost = node->g_cost_ + (input.squaredNorm() + w_time_) * tau;
                 double optimal_time = 0;
                 double fcost = gcost + lambda_heu_ * estimateHeuristic(new_pos, new_vel, end_pt, end_v, optimal_time);
@@ -305,16 +308,16 @@ bool KinodynamicAstar::search(Vector3d start_pt, Vector3d start_v,
                     continue;
                 }
 
-                if (nodeinfos(new_idx(0), new_idx(1), new_idx(2)).visited_ == 0) {
+                if (*nodeinfos(new_idx(0), new_idx(1), new_idx(2)).visited_ == 0) {
                     SearchNodePtr new_node = new SearchNode(new_idx
                         , nodeinfos(new_idx(0), new_idx(1), new_idx(2))
                         , gcost, fcost, new_pos, new_vel, input, tau, new_time
                         , &(node->info_));
-                    new_node->info_.visited_ = 1;
+                    *new_node->info_.visited_ = 1;
                     nodeset.push_back(new_node);
                     openset.push(new_node);
                     tmp_expand_nodes.push_back(&(new_node->info_));
-                } else if (nodeinfos(new_idx(0), new_idx(1), new_idx(2)).visited_ == 1) {
+                } else if (*nodeinfos(new_idx(0), new_idx(1), new_idx(2)).visited_ == 1) {
                     if (gcost < nodeinfos(new_idx(0), new_idx(1), new_idx(2)).g_cost_) {
                         SearchNodePtr new_node = new SearchNode(new_idx
                         , nodeinfos(new_idx(0), new_idx(1), new_idx(2))
@@ -339,7 +342,7 @@ FAILED:
         for (int i = 0; i < nodeset.size(); i++) {
             delete nodeset[i];
         }
-        delete []nodeinfos;
+        // delete []nodeinfos;
         cerr << "Kinodynamic A* failed, spend " << chrono::duration<double>(t1 - t0).count() * 1e3 << "ms" << endl;
         return false;
     }
@@ -355,7 +358,7 @@ FAILED:
     for (int i = 0; i < nodeset.size(); i++) {
         delete nodeset[i];
     }
-    delete []nodeinfos;
+    // delete []nodeinfos;
 
     return true;
 }

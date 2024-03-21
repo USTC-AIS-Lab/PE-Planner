@@ -22,7 +22,7 @@ public:
     static Vector3d getBsplineValue(const double ts, const MatrixXd &ctrl_pts, double t, int degree);
     static double basisFunction(const int k, const int d, const double u, const double ts);
     static MatrixXd getDerivativeCtrlPts(const MatrixXd &ctrl_pts, double ts);
-    template <class T> static T getBsplineValueFast(const double ts, const MatrixXd &ctrl_pts, double t, int degree, T *grad = nullptr);
+    template <class T> static T getBsplineValueFast(const double ts, const MatrixXd &ctrl_pts, double t, int degree, T *grad = nullptr, Vector4d *grad2=nullptr, int *idx=nullptr);
     static double getArcLength(double ts, const MatrixXd &deriv_ctrl_pts, double dt, double start_t, double end_t, vector<double> *arc_lengths);
 };
 
@@ -66,7 +66,7 @@ inline void UniformBspline::parameter2Bspline(const double ts, const vector<Vect
     ctrl_pts.col(0) = px;
     ctrl_pts.col(1) = py;
     ctrl_pts.col(2) = pz;
-    cout << "B-spline parameterization spend " << chrono::duration<double>(chrono::steady_clock::now() - time).count() * 1e3 << " ms" << endl;
+    // cout << "B-spline parameterization spend " << chrono::duration<double>(chrono::steady_clock::now() - time).count() * 1e3 << " ms" << endl;
 }
 
 inline void UniformBspline::parameter2Bspline(const double ts, const vector<double> &poss
@@ -140,7 +140,7 @@ inline MatrixXd UniformBspline::getDerivativeCtrlPts(const MatrixXd &ctrl_pts, d
 }
 
 template <class T>
-inline T UniformBspline::getBsplineValueFast(const double ts, const MatrixXd &ctrl_pts, double t, int degree, T *grad) {
+inline T UniformBspline::getBsplineValueFast(const double ts, const MatrixXd &ctrl_pts, double t, int degree, T *grad, Vector4d *grad2, int *idx) {
     if (t < degree * ts - 1e-6 || t > ctrl_pts.rows() * ts + 1e-6) {
         throw "getBsplineValueFast parameter error";
         exit(0);
@@ -203,6 +203,10 @@ inline T UniformBspline::getBsplineValueFast(const double ts, const MatrixXd &ct
             w2_g = 0.5 * (x_g + 2 * x * x_g - 3 * x * x * x_g);
             w3_g = 0.5 * x * x * x_g;
             *grad = w0_g * ctrl_pts.row(k - 3) + w1_g * ctrl_pts.row(k - 2) + w2_g * ctrl_pts.row(k - 1) + w3_g * ctrl_pts.row(k);
+        }
+        if (grad2) {
+            *grad2 = Vector4d(w0, w1, w2, w3);
+            *idx = k - 3;
         }
         break;
     default:

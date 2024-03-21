@@ -6,7 +6,7 @@ elseif(UNIX AND NOT APPLE)
     set(LINUX 1)
 endif()
 
-project(pe-planner)
+project(quadrotor_mpc)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_BUILD_TYPE Release)
@@ -36,6 +36,7 @@ if (LINUX)
         modules/ros_interface/ros_interface.cpp
         modules/kinodynamic_astar/kinodynamic_astar.cpp
         modules/bspline_opt/bspline_optimizer.cpp
+        modules/bspline_opt/bspline_optimizer2.cpp
         modules/px4_interface/px4_interface.cpp)
     target_link_libraries(planner_px4
         Python3::Python Python3::NumPy nlopt ${catkin_LIBRARIES}

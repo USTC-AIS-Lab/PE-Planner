@@ -4,7 +4,6 @@
 #include <pcl/point_cloud.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <tf2/LinearMath/Quaternion.h>
-#include <geometry_msgs/PoseStamped.h>
 
 #include "ros_interface.hpp"
 #include "common/rotation_math.hpp"
@@ -14,17 +13,16 @@
 RosInterface::RosInterface(Vector3d map_size)
     : map_size_(map_size) {
     ros::NodeHandle nh;
-    grid_map_pub_ = nh.advertise<sensor_msgs::PointCloud2>("/map", 2);
-    sdf_map_pub_ = nh.advertise<sensor_msgs::PointCloud2>("/sdf_map", 2);
-    quadmesh_pub_ = nh.advertise<visualization_msgs::Marker>("/quadrotor", 5);
-    kino_traj_pub_ = nh.advertise<visualization_msgs::Marker>("/kino_traj", 2);
-    bspline_traj_pub_ = nh.advertise<visualization_msgs::Marker>("/bspline_traj", 2);
-    mpcc_traj_pub_ = nh.advertise<visualization_msgs::Marker>("/mpcc_traj", 2);
-    predict_traj_pub_ = nh.advertise<visualization_msgs::Marker>("/predict_traj", 2);
-    collision_pub_ = nh.advertise<visualization_msgs::Marker>("/collision", 2);
-    fanmesh_pub_ = nh.advertise<visualization_msgs::Marker>("/fan", 2);
-    dyn_obs_pub_ = nh.advertise<visualization_msgs::Marker>("/dyn_obs", 10);
-    pose_pub_ = nh.advertise<geometry_msgs::PoseStamped>("/pose", 2);
+    grid_map_pub_ = nh.advertise<sensor_msgs::PointCloud2>("/map", 1);
+    sdf_map_pub_ = nh.advertise<sensor_msgs::PointCloud2>("/sdf_map", 1);
+    quadmesh_pub_ = nh.advertise<visualization_msgs::Marker>("/quadrotor", 1);
+    kino_traj_pub_ = nh.advertise<visualization_msgs::Marker>("/kino_traj", 1);
+    bspline_traj_pub_ = nh.advertise<visualization_msgs::Marker>("/bspline_traj", 1);
+    mpcc_traj_pub_ = nh.advertise<visualization_msgs::Marker>("/mpcc_traj", 1);
+    predict_traj_pub_ = nh.advertise<visualization_msgs::Marker>("/predict_traj", 1);
+    collision_pub_ = nh.advertise<visualization_msgs::Marker>("/collision", 1);
+    fanmesh_pub_ = nh.advertise<visualization_msgs::Marker>("/fan", 1);
+    dyn_obs_pub_ = nh.advertise<sensor_msgs::PointCloud2>("/dyn_obs", 1);
 }
 
 void RosInterface::publish_grid_map(GridMap &map) {
@@ -92,10 +90,10 @@ void RosInterface::publish_quadmesh(Vector3d pos, Vector4d quat) {
     Vector3d ang = Quaterniond(quat.w(), quat.x(), quat.y(), quat.z()).matrix().eulerAngles(2, 1, 0);
     ang(0) += M_PI / 4;
     Quaterniond q = AngleAxisd(ang[0], Vector3d::UnitZ()) * AngleAxisd(ang[1], Vector3d::UnitY()) * AngleAxisd(ang[2], Vector3d::UnitX());
-    meshROS.pose.orientation.w = quat.w();
-    meshROS.pose.orientation.x = quat.x();
-    meshROS.pose.orientation.y = quat.y();
-    meshROS.pose.orientation.z = quat.z();
+    meshROS.pose.orientation.w = q.w();
+    meshROS.pose.orientation.x = q.x();
+    meshROS.pose.orientation.y = q.y();
+    meshROS.pose.orientation.z = q.z();
     meshROS.scale.x = 1.0;
     meshROS.scale.y = 1.0;
     meshROS.scale.z = 1.0;
@@ -274,6 +272,32 @@ void RosInterface::publish_collision(vector<Vector3d> &pos) {
     predict_traj_pub_.publish(cp);
 }
 
+void RosInterface::publish_dyn_obs(vector<DynObs> &obs) {
+    pcl::PointCloud<pcl::PointXYZ> cloudMap;
+    double resolution = 0.05;
+    for (const auto &o : obs) {
+        for (double z = resolution / 2.0; z < map_size_(2); z += resolution) {
+            for (double a = 0; a < 360.0; a += 10.0) {
+                for (double r = 0; r < o.radius_; r += resolution / 2.0) {
+                    pcl::PointXYZ pt;
+                    pt.x = o.pos_.x() + r * sin(a / 180.0 * M_PI) - map_size_(0) / 2.0;
+                    pt.y = o.pos_.y() + r * cos(a / 180.0 * M_PI) - map_size_(1) / 2.0;
+                    pt.z = z;
+                    cloudMap.points.push_back(pt);
+                }
+            }
+        }
+    }
+    cloudMap.width = cloudMap.points.size();
+    cloudMap.height = 1;
+    cloudMap.is_dense = true;
+
+    sensor_msgs::PointCloud2 dynobs_pcd;
+    pcl::toROSMsg(cloudMap, dynobs_pcd);
+    dynobs_pcd.header.frame_id = "world";
+    dyn_obs_pub_.publish(dynobs_pcd);
+}
+
 void RosInterface::publish_pose(Vector3d pos, Vector4d quat) {
     geometry_msgs::PoseStamped pose;
     pose.header.frame_id = "world";
@@ -285,7 +309,6 @@ void RosInterface::publish_pose(Vector3d pos, Vector4d quat) {
     pose.pose.orientation.y = quat.y();
     pose.pose.orientation.z = quat.z();
     pose.pose.orientation.w = quat.w();
-    pose_pub_.publish(pose);
     tf::Transform transform;
     transform.setOrigin(tf::Vector3(pos.x() - map_size_(0) / 2.0, pos.y() - map_size_(1) / 2.0, pos.z()));
     Vector3d ang = quaternion_to_rpy(Quaterniond(quat.w(), quat.x(), quat.y(), quat.z()));

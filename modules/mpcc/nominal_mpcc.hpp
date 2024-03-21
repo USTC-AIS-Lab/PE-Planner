@@ -11,6 +11,7 @@
 #include <nlopt.hpp>
 #include <Eigen/Dense>
 #include <chrono>
+#include <list>
 
 #if USE_EXTENDED_DYNAMICS
 #include "quadrotor_dynamics/extended_quad_dynamic.hpp"
@@ -59,6 +60,9 @@ private:
     bool flag;
     const double dt_;
     Vector3d disturbance_acc_;
+    const vector<DynObs> *dynobs_;
+
+    list<Vector3d> past_disturbances_;
 
     double cbf_cost_;
     double t_w_ratio_;
@@ -93,6 +97,7 @@ public:
         const double len,
         const Matrix<double, u_dim_, 1> last_u,
         const Vector3d disturbance_acc,
+        const vector<DynObs> &dynobs,
         Matrix<double, _n_step, u_dim_> &u, 
         Matrix<double, _n_step, x_dim_> &x_predict,
         Matrix<double, _n_step + 1, 1> &t_index,

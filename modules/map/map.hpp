@@ -3,6 +3,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <random>
 #include <Eigen/Dense>
 
 using namespace std;
@@ -134,5 +135,106 @@ public:
     }
     void push_obs(ObsWall &o) {
         walls_.push_back(o);
+    }
+};
+
+class DynObs {
+public:
+    double radius_;
+    double vel_;
+    Vector2d start_pos_;
+    Vector2d end_pos_;
+
+    Vector2d pos_;
+    double pos_ratio_;
+    double vel_ratio_;
+    int dir_;
+
+    Vector3d axis_l_;
+
+    DynObs(double radius, double vel, Vector2d start_pos, Vector2d end_pos) 
+        : radius_(radius), vel_(vel), start_pos_(start_pos), end_pos_(end_pos) {
+        vel_ratio_ = vel_ / (end_pos_ - start_pos_).norm();
+        random_device rd;
+        default_random_engine eng(rd());
+        pos_ratio_ = uniform_real_distribution<double>(0, 1)(eng);
+        pos_ = pos_ratio_ * start_pos_ + (1 - pos_ratio_) * end_pos_;
+        dir_ = uniform_int_distribution<int>(0, 1)(eng) * 2 - 1;
+
+        double alpha = 4 * radius_ * radius_;
+        double beta = 3.0 * 3.0;
+        double tmp1 = 2 / alpha;
+        double tmp2 = (4.0 - alpha * tmp1) / beta;
+        axis_l_ = Vector3d(sqrt(1 / tmp1), sqrt(1 / tmp1), sqrt(1 / tmp2));
+    }
+    
+    void update(double dt) {
+        pos_ratio_ += dir_ * vel_ratio_ * dt;
+        if (pos_ratio_ < -1e-6) {
+            dir_ = 1;
+            pos_ratio_ = 0;
+        } else if (pos_ratio_ > 1 + 1e-6) {
+            dir_ = -1;
+            pos_ratio_ = 1;
+        }
+        pos_ = pos_ratio_ * start_pos_ + (1 - pos_ratio_) * end_pos_;
+    }
+
+    void get_dis(const Vector3d pos, const double t, double *dis, Vector3d *g = nullptr) const {
+        double r = pos_ratio_ + dir_ * vel_ratio_ * t;
+        Vector2d p = r * start_pos_ + (1 - r) * end_pos_;
+        double tmp = (pos - Vector3d(p.x(), p.y(), pos.z())).norm();
+        *dis = tmp - radius_;
+        if (g) {
+            if (tmp > 1e-12) {
+                *g = (pos - Vector3d(p.x(), p.y(), pos.z())) / tmp;
+            } else {
+                g->setZero();
+            }
+        }
+    }
+
+    void get_dis_ellipsoid(const Vector3d pos, const double t, double *dis, Vector3d *g = nullptr) const {
+        double r = pos_ratio_ + dir_ * vel_ratio_ * t;
+        Vector2d _p = r * start_pos_ + (1 - r) * end_pos_;
+        Vector3d p(_p.x(), _p.y(), 1.5);
+        Vector3d m = pos - p; //ignore rotation
+        Vector3d mz(0, 0, m.z());
+        Vector3d mxy = m - mz;
+        double sin2_psi = mxy.squaredNorm() / m.squaredNorm();
+        double cos2_psi = mz.squaredNorm() / m.squaredNorm();
+        double l2 = 1 / (sin2_psi / pow(axis_l_.x(), 2) + cos2_psi / pow(axis_l_.z(), 2));
+        double l = sqrt(l2);
+        double d = (pos - p).norm();
+        *dis = d - l;
+        if (g) {
+            double dis1, dis2, dis3;
+            double del = 1e-4;
+            get_dis_ellipsoid(pos + Vector3d(del, 0, 0), t, &dis1);
+            get_dis_ellipsoid(pos + Vector3d(0, del, 0), t, &dis2);
+            get_dis_ellipsoid(pos + Vector3d(0, 0, del), t, &dis3);
+            *g = Vector3d((dis1 - *dis) / del, (dis2 - *dis) / del, (dis3 - *dis) / del);
+            // cout << g->transpose() << endl;
+        }
+    }
+
+    void get_dis_ellipsoid2(const Vector3d pos, const double t, double *dis, Vector3d *g = nullptr) const {
+        double r = pos_ratio_ + dir_ * vel_ratio_ * t;
+        Vector2d _p = r * start_pos_ + (1 - r) * end_pos_;
+        Vector3d p(_p.x(), _p.y(), 1.5);
+        Vector3d m = pos - p;
+        *dis = pow(m.x(), 2) / pow(axis_l_.x() + 0.4, 2)
+                + pow(m.y(), 2) / pow(axis_l_.y() + 0.4, 2)
+                + pow(m.z(), 2) / pow(axis_l_.z() + 0.4, 2)
+                - 1 + 0.4;
+        if (g) {
+            double dis1, dis2, dis3;
+            double del = 1e-10;
+            get_dis_ellipsoid2(pos + Vector3d(del, 0, 0), t, &dis1);
+            get_dis_ellipsoid2(pos + Vector3d(0, del, 0), t, &dis2);
+            get_dis_ellipsoid2(pos + Vector3d(0, 0, del), t, &dis3);
+            *g = Vector3d((dis1 - *dis) / del, (dis2 - *dis) / del, (dis3 - *dis) / del);
+            // cout << g->transpose() << endl;
+        }
     }
 };

@@ -42,7 +42,6 @@ NominalMpcc::NominalMpcc(double hover_ratio, string algorithm, int maxeval) :
     opt_.set_local_optimizer(local_opt);
 }
 
-//velocity constraints
 void NominalMpcc::v_b_constraint(unsigned m, double *result, unsigned n, const double *u,
                             double *gradient, /* NULL if not needed */
                             NominalMpcc *instance) {
@@ -91,7 +90,7 @@ double NominalMpcc::cost_func(const vector<double> &u, vector<double> &grad, Nom
     acc_g[0].block(0, 0, 3, u_dim_) = accdotu;
     for (int k = 1; k < _n_step; k++) {
         uvec << u[0 + k * u_dim_], u[1 + k * u_dim_], u[2 + k * u_dim_], u[3 + k * u_dim_];
-        instance->rk4_func(state[k - 1], uvec, k < 2 ? instance->disturbance_acc_ : Vector3d(0, 0, 0), dt, state[k], x1dotx0, x1dotu, acc[k], accdotx0, accdotu);
+        instance->rk4_func(state[k - 1], uvec, k < 1 ? instance->disturbance_acc_ : Vector3d(0, 0, 0), dt, state[k], x1dotx0, x1dotu, acc[k], accdotx0, accdotu);
         state_g[k].block(0, k * u_dim_, x_dim_, u_dim_) = x1dotu;
         state_g[k].block(0, 0, x_dim_, u_dim_ * k) = x1dotx0 * state_g[k - 1].block(0, 0, x_dim_, u_dim_ * k);
         acc_g[k].block(0, k * u_dim_, 3, u_dim_) = accdotu;
@@ -205,99 +204,200 @@ double NominalMpcc::cost_func(const vector<double> &u, vector<double> &grad, Nom
 
     //calculate the cost of violating CBF constraints
     double cbf_cost = 0.;
+    double acbf_cost = -INFINITY;
     // double gamma = 0.7;
-    Matrix<double, u_dim_ * _n_step + _n_step + 1, 1> cbf_cost_g;
+    Matrix<double, u_dim_ * _n_step + _n_step + 1, 1> cbf_cost_g, acbf_cost_g;
     cbf_cost_g.setZero();
+    acbf_cost_g.setZero();
     bool cbf_en = true;
+    // if (!instance->flag) {
+    for (int k = 0; k < _n_step; k++) {
 #if 1
-    for (int k = 0; k < _n_step; k++) {
-        std::pair<double, Eigen::Vector3d> dis1;
-        if (k == 0) {
-            dis1 = instance->sdf_->get_dist_with_grad_trilinear<double>(instance->init_state_.block(0, 0, 3, 1));
-        } else {
-            dis1 = instance->sdf_->get_dist_with_grad_trilinear<double>(state[k - 1].block(0, 0, 3, 1));
-        }
-        auto dis2 = instance->sdf_->get_dist_with_grad_trilinear<double>(state[k].block(0, 0, 3, 1));
-        double gamma = cbf_en ? 0.65 : 1.0;//0.2 * k / (_n_step - 1) + 0.8;
-        double cbf = (1 - gamma) * (dis1.first - 0.25) - (dis2.first - 0.25);
-        if (cbf > 0.0) {
-            double tmp = cbf;//pow(cbf, 2);
-            double scale = cbf_en ? pow(0.9, k) : 1.0;
-            cbf_cost += scale * tmp;
+        {
+            std::pair<double, Eigen::Vector3d> dis1;
             if (k == 0) {
-                cbf_cost_g.block(0, 0, u_dim_ * _n_step, 1) -= scale * (dis2.second.transpose() * state_g[k].block(0, 0, 3, u_dim_ * _n_step)).transpose();
+                dis1 = instance->sdf_->get_dist_with_grad_trilinear<double>(instance->init_state_.block(0, 0, 3, 1));
             } else {
-                cbf_cost_g.block(0, 0, u_dim_ * _n_step, 1) += scale * (((1 - gamma) * dis1.second.transpose() * state_g[k - 1].block(0, 0, 3, u_dim_ * _n_step)
-                    - dis2.second.transpose() * state_g[k].block(0, 0, 3, u_dim_ * _n_step))).transpose();
+                dis1 = instance->sdf_->get_dist_with_grad_trilinear<double>(state[k - 1].block(0, 0, 3, 1));
             }
-        }
-    }
-#else
-    for (int k = 0; k < _n_step; k++) {
-        double gamma1 = cbf_en ? 0.65 : 1.0;
-        double gamma2 = cbf_en ? 0.9 : 1.0;
-        double gamma3 = cbf_en ? 0.95 : 1.0;
-        double scale = cbf_en ? pow(0.9, k) : 1.0;
-        if (k == 0) {
-            std::pair<double, Eigen::Vector3d> dis1 = instance->sdf_->get_dist_with_grad_trilinear<double>(instance->init_state_.block(0, 0, 3, 1));
             auto dis2 = instance->sdf_->get_dist_with_grad_trilinear<double>(state[k].block(0, 0, 3, 1));
-            double cbf = (dis2.first - 0.25) + (gamma1 - 1) * (dis1.first - 0.25);
-            if (cbf < 0.0) {
-                double tmp = -cbf;
+            double gamma = cbf_en ? 0.65 : 1.0;//0.2 * k / (_n_step - 1) + 0.8;
+            double cbf = (1 - gamma) * (dis1.first - 0.25) - (dis2.first - 0.25);
+            if (cbf > 0.0) {
+                double tmp = cbf;//pow(cbf, 2);
+                double scale = pow(0.9, k);
                 cbf_cost += scale * tmp;
-                cbf_cost_g.block(0, 0, u_dim_ * _n_step, 1) -= scale * (dis2.second.transpose() * state_g[k].block(0, 0, 3, u_dim_ * _n_step)).transpose();
-            }
-        } else if (k == 1) {
-            std::pair<double, Eigen::Vector3d> dis1 = instance->sdf_->get_dist_with_grad_trilinear<double>(instance->init_state_.block(0, 0, 3, 1));
-            std::pair<double, Eigen::Vector3d> dis2 = instance->sdf_->get_dist_with_grad_trilinear<double>(state[k - 1].block(0, 0, 3, 1));
-            auto dis3 = instance->sdf_->get_dist_with_grad_trilinear<double>(state[k].block(0, 0, 3, 1));
-            double cbf = (dis3.first - 0.25) 
-                        + (gamma1 + gamma2 - 2) * (dis2.first - 0.25) 
-                        + (gamma1 - 1) * (gamma2 - 1) * (dis1.first - 0.25);
-            if (cbf < 0.0) {
-                double tmp = -cbf;
-                cbf_cost += scale * tmp;
-                cbf_cost_g.block(0, 0, u_dim_ * _n_step, 1) -= scale * (dis3.second.transpose() * state_g[k].block(0, 0, 3, u_dim_ * _n_step)
-                                                            + (gamma1 + gamma2 - 2) * dis2.second.transpose() * state_g[k - 1].block(0, 0, 3, u_dim_ * _n_step)).transpose();
-            }
-        } else if (k == 2) {
-            std::pair<double, Eigen::Vector3d> dis1 = instance->sdf_->get_dist_with_grad_trilinear<double>(instance->init_state_.block(0, 0, 3, 1));
-            std::pair<double, Eigen::Vector3d> dis2 = instance->sdf_->get_dist_with_grad_trilinear<double>(state[k - 2].block(0, 0, 3, 1));
-            std::pair<double, Eigen::Vector3d> dis3 = instance->sdf_->get_dist_with_grad_trilinear<double>(state[k - 1].block(0, 0, 3, 1));
-            auto dis4 = instance->sdf_->get_dist_with_grad_trilinear<double>(state[k].block(0, 0, 3, 1));
-            double cbf = (dis4.first - 0.25) 
-                        + (gamma1 + gamma2 + gamma3 - 3) * (dis3.first - 0.25) 
-                        + ((gamma1 - 1) * (gamma2 + gamma3 - 2) + (gamma2 - 1) * (gamma3 - 1)) * (dis2.first - 0.25)
-                        + (gamma1 - 1) * (gamma2 - 1) * (gamma3 - 1) * (dis1.first - 0.25);
-            if (cbf < 0.0) {
-                double tmp = -cbf;
-                cbf_cost += scale * tmp;
-                cbf_cost_g.block(0, 0, u_dim_ * _n_step, 1) -= scale * (
-                    dis4.second.transpose() * state_g[k].block(0, 0, 3, u_dim_ * _n_step)
-                    + (gamma1 + gamma2 + gamma3 - 3) * dis3.second.transpose() * state_g[k - 1].block(0, 0, 3, u_dim_ * _n_step)
-                    + ((gamma1 - 1) * (gamma2 + gamma3 - 2) + (gamma2 - 1) * (gamma3 - 1)) * dis2.second.transpose() * state_g[k - 2].block(0, 0, 3, u_dim_ * _n_step)).transpose();
-            }
-        } else {
-            std::pair<double, Eigen::Vector3d> dis1 = instance->sdf_->get_dist_with_grad_trilinear<double>(state[k - 3].block(0, 0, 3, 1));
-            std::pair<double, Eigen::Vector3d> dis2 = instance->sdf_->get_dist_with_grad_trilinear<double>(state[k - 2].block(0, 0, 3, 1));
-            std::pair<double, Eigen::Vector3d> dis3 = instance->sdf_->get_dist_with_grad_trilinear<double>(state[k - 1].block(0, 0, 3, 1));
-            auto dis4 = instance->sdf_->get_dist_with_grad_trilinear<double>(state[k].block(0, 0, 3, 1));
-            double cbf = (dis4.first - 0.25) 
-                        + (gamma1 + gamma2 + gamma3 - 3) * (dis3.first - 0.25) 
-                        + ((gamma1 - 1) * (gamma2 + gamma3 - 2) + (gamma2 - 1) * (gamma3 - 1)) * (dis2.first - 0.25)
-                        + (gamma1 - 1) * (gamma2 - 1) * (gamma3 - 1) * (dis1.first - 0.25);
-            if (cbf < 0.0) {
-                double tmp = -cbf;
-                cbf_cost += scale * tmp;
-                cbf_cost_g.block(0, 0, u_dim_ * _n_step, 1) -= scale * (
-                    dis4.second.transpose() * state_g[k].block(0, 0, 3, u_dim_ * _n_step)
-                    + (gamma1 + gamma2 + gamma3 - 3) * dis3.second.transpose() * state_g[k - 1].block(0, 0, 3, u_dim_ * _n_step)
-                    + ((gamma1 - 1) * (gamma2 + gamma3 - 2) + (gamma2 - 1) * (gamma3 - 1)) * dis2.second.transpose() * state_g[k - 2].block(0, 0, 3, u_dim_ * _n_step)
-                    + (gamma1 - 1) * (gamma2 - 1) * (gamma3 - 1) * dis1.second.transpose() * state_g[k - 3].block(0, 0, 3, u_dim_ * _n_step)).transpose();
+                if (k == 0) {
+                    cbf_cost_g.block(0, 0, u_dim_ * _n_step, 1) -= scale * (dis2.second.transpose() * state_g[k].block(0, 0, 3, u_dim_ * _n_step)).transpose();
+                } else {
+                    cbf_cost_g.block(0, 0, u_dim_ * _n_step, 1) += scale * (((1 - gamma) * dis1.second.transpose() * state_g[k - 1].block(0, 0, 3, u_dim_ * _n_step)
+                        - dis2.second.transpose() * state_g[k].block(0, 0, 3, u_dim_ * _n_step))).transpose();
+                }
             }
         }
-    }
+        {
+            for (const auto &o : *(instance->dynobs_)) {
+                std::pair<double, Eigen::Vector3d> dis1, dis2;
+                if (k == 0) {
+                    o.get_dis_ellipsoid(instance->init_state_.block(0, 0, 3, 1), k * dt, &dis1.first, &dis1.second);
+                } else {
+                    o.get_dis_ellipsoid(state[k - 1].block(0, 0, 3, 1), k * dt, &dis1.first, &dis1.second);
+                }
+                o.get_dis_ellipsoid(state[k].block(0, 0, 3, 1), (k + 1) * dt, &dis2.first, &dis2.second);
+                double gamma = 0.65;//0.2 * k / (_n_step - 1) + 0.8;
+                double cbf = (1 - gamma) * (dis1.first - 0.25) - (dis2.first - 0.25);
+                if (cbf > 0.0) {
+                    double tmp = cbf;//pow(cbf, 2);
+                    double scale = pow(0.9, k);
+                    cbf_cost += scale * tmp;
+                    if (k == 0) {
+                        cbf_cost_g.block(0, 0, u_dim_ * _n_step, 1) -= scale * (dis2.second.transpose() * state_g[k].block(0, 0, 3, u_dim_ * _n_step)).transpose();
+                    } else {
+                        cbf_cost_g.block(0, 0, u_dim_ * _n_step, 1) += scale * (((1 - gamma) * dis1.second.transpose() * state_g[k - 1].block(0, 0, 3, u_dim_ * _n_step)
+                            - dis2.second.transpose() * state_g[k].block(0, 0, 3, u_dim_ * _n_step))).transpose();
+                    }
+                }
+            }
+        }
+#else
+        {
+            double gamma1 = cbf_en ? 0.65 : 1.0;
+            double gamma2 = cbf_en ? 0.9 : 1.0;
+            double gamma3 = cbf_en ? 0.95 : 1.0;
+            double scale = cbf_en ? pow(0.9, k) : 1.0;
+            if (k == 0) {
+                std::pair<double, Eigen::Vector3d> dis1 = instance->sdf_->get_dist_with_grad_trilinear<double>(instance->init_state_.block(0, 0, 3, 1));
+                auto dis2 = instance->sdf_->get_dist_with_grad_trilinear<double>(state[k].block(0, 0, 3, 1));
+                double cbf = (dis2.first - 0.25) + (gamma1 - 1) * (dis1.first - 0.25);
+                if (cbf < 0.0) {
+                    double tmp = -cbf;
+                    cbf_cost += scale * tmp;
+                    cbf_cost_g.block(0, 0, u_dim_ * _n_step, 1) -= scale * (dis2.second.transpose() * state_g[k].block(0, 0, 3, u_dim_ * _n_step)).transpose();
+                }
+            } else if (k == 1) {
+                std::pair<double, Eigen::Vector3d> dis1 = instance->sdf_->get_dist_with_grad_trilinear<double>(instance->init_state_.block(0, 0, 3, 1));
+                std::pair<double, Eigen::Vector3d> dis2 = instance->sdf_->get_dist_with_grad_trilinear<double>(state[k - 1].block(0, 0, 3, 1));
+                auto dis3 = instance->sdf_->get_dist_with_grad_trilinear<double>(state[k].block(0, 0, 3, 1));
+                double cbf = (dis3.first - 0.25) 
+                            + (gamma1 + gamma2 - 2) * (dis2.first - 0.25) 
+                            + (gamma1 - 1) * (gamma2 - 1) * (dis1.first - 0.25);
+                if (cbf < 0.0) {
+                    double tmp = -cbf;
+                    cbf_cost += scale * tmp;
+                    cbf_cost_g.block(0, 0, u_dim_ * _n_step, 1) -= scale * (dis3.second.transpose() * state_g[k].block(0, 0, 3, u_dim_ * _n_step)
+                                                                + (gamma1 + gamma2 - 2) * dis2.second.transpose() * state_g[k - 1].block(0, 0, 3, u_dim_ * _n_step)).transpose();
+                }
+            } else if (k == 2) {
+                std::pair<double, Eigen::Vector3d> dis1 = instance->sdf_->get_dist_with_grad_trilinear<double>(instance->init_state_.block(0, 0, 3, 1));
+                std::pair<double, Eigen::Vector3d> dis2 = instance->sdf_->get_dist_with_grad_trilinear<double>(state[k - 2].block(0, 0, 3, 1));
+                std::pair<double, Eigen::Vector3d> dis3 = instance->sdf_->get_dist_with_grad_trilinear<double>(state[k - 1].block(0, 0, 3, 1));
+                auto dis4 = instance->sdf_->get_dist_with_grad_trilinear<double>(state[k].block(0, 0, 3, 1));
+                double cbf = (dis4.first - 0.25) 
+                            + (gamma1 + gamma2 + gamma3 - 3) * (dis3.first - 0.25) 
+                            + ((gamma1 - 1) * (gamma2 + gamma3 - 2) + (gamma2 - 1) * (gamma3 - 1)) * (dis2.first - 0.25)
+                            + (gamma1 - 1) * (gamma2 - 1) * (gamma3 - 1) * (dis1.first - 0.25);
+                if (cbf < 0.0) {
+                    double tmp = -cbf;
+                    cbf_cost += scale * tmp;
+                    cbf_cost_g.block(0, 0, u_dim_ * _n_step, 1) -= scale * (
+                        dis4.second.transpose() * state_g[k].block(0, 0, 3, u_dim_ * _n_step)
+                        + (gamma1 + gamma2 + gamma3 - 3) * dis3.second.transpose() * state_g[k - 1].block(0, 0, 3, u_dim_ * _n_step)
+                        + ((gamma1 - 1) * (gamma2 + gamma3 - 2) + (gamma2 - 1) * (gamma3 - 1)) * dis2.second.transpose() * state_g[k - 2].block(0, 0, 3, u_dim_ * _n_step)).transpose();
+                }
+            } else {
+                std::pair<double, Eigen::Vector3d> dis1 = instance->sdf_->get_dist_with_grad_trilinear<double>(state[k - 3].block(0, 0, 3, 1));
+                std::pair<double, Eigen::Vector3d> dis2 = instance->sdf_->get_dist_with_grad_trilinear<double>(state[k - 2].block(0, 0, 3, 1));
+                std::pair<double, Eigen::Vector3d> dis3 = instance->sdf_->get_dist_with_grad_trilinear<double>(state[k - 1].block(0, 0, 3, 1));
+                auto dis4 = instance->sdf_->get_dist_with_grad_trilinear<double>(state[k].block(0, 0, 3, 1));
+                double cbf = (dis4.first - 0.25) 
+                            + (gamma1 + gamma2 + gamma3 - 3) * (dis3.first - 0.25) 
+                            + ((gamma1 - 1) * (gamma2 + gamma3 - 2) + (gamma2 - 1) * (gamma3 - 1)) * (dis2.first - 0.25)
+                            + (gamma1 - 1) * (gamma2 - 1) * (gamma3 - 1) * (dis1.first - 0.25);
+                if (cbf < 0.0) {
+                    double tmp = -cbf;
+                    cbf_cost += scale * tmp;
+                    cbf_cost_g.block(0, 0, u_dim_ * _n_step, 1) -= scale * (
+                        dis4.second.transpose() * state_g[k].block(0, 0, 3, u_dim_ * _n_step)
+                        + (gamma1 + gamma2 + gamma3 - 3) * dis3.second.transpose() * state_g[k - 1].block(0, 0, 3, u_dim_ * _n_step)
+                        + ((gamma1 - 1) * (gamma2 + gamma3 - 2) + (gamma2 - 1) * (gamma3 - 1)) * dis2.second.transpose() * state_g[k - 2].block(0, 0, 3, u_dim_ * _n_step)
+                        + (gamma1 - 1) * (gamma2 - 1) * (gamma3 - 1) * dis1.second.transpose() * state_g[k - 3].block(0, 0, 3, u_dim_ * _n_step)).transpose();
+                }
+            }
+        }
+
+        {
+            for (const auto &o : *(instance->dynobs_)) {
+                double gamma1 = cbf_en ? 0.65 : 1.0;
+                double gamma2 = cbf_en ? 0.9 : 1.0;
+                double gamma3 = cbf_en ? 0.95 : 1.0;
+                double scale = cbf_en ? pow(0.9, k) : 1.0;
+                if (k == 0) {
+                    std::pair<double, Eigen::Vector3d> dis1, dis2;
+                    o.get_dis_ellipsoid(instance->init_state_.block(0, 0, 3, 1), k * dt, &dis1.first, &dis1.second);
+                    o.get_dis_ellipsoid(state[k].block(0, 0, 3, 1), (k + 1) * dt, &dis2.first, &dis2.second);
+                    double cbf = (dis2.first - 0.25) + (gamma1 - 1) * (dis1.first - 0.25);
+                    if (cbf < 0.0) {
+                        double tmp = -cbf;
+                        cbf_cost += scale * tmp;
+                        cbf_cost_g.block(0, 0, u_dim_ * _n_step, 1) -= scale * (dis2.second.transpose() * state_g[k].block(0, 0, 3, u_dim_ * _n_step)).transpose();
+                    }
+                } else if (k == 1) {
+                    std::pair<double, Eigen::Vector3d> dis1, dis2, dis3;
+                    o.get_dis_ellipsoid(instance->init_state_.block(0, 0, 3, 1), (k - 1) * dt, &dis1.first, &dis1.second);
+                    o.get_dis_ellipsoid(state[k - 1].block(0, 0, 3, 1), (k) * dt, &dis2.first, &dis2.second);
+                    o.get_dis_ellipsoid(state[k].block(0, 0, 3, 1), (k + 1) * dt, &dis3.first, &dis3.second);
+                    double cbf = (dis3.first - 0.25) 
+                                + (gamma1 + gamma2 - 2) * (dis2.first - 0.25) 
+                                + (gamma1 - 1) * (gamma2 - 1) * (dis1.first - 0.25);
+                    if (cbf < 0.0) {
+                        double tmp = -cbf;
+                        cbf_cost += scale * tmp;
+                        cbf_cost_g.block(0, 0, u_dim_ * _n_step, 1) -= scale * (dis3.second.transpose() * state_g[k].block(0, 0, 3, u_dim_ * _n_step)
+                                                                    + (gamma1 + gamma2 - 2) * dis2.second.transpose() * state_g[k - 1].block(0, 0, 3, u_dim_ * _n_step)).transpose();
+                    }
+                } else if (k == 2) {
+                    std::pair<double, Eigen::Vector3d> dis1, dis2, dis3, dis4;
+                    o.get_dis_ellipsoid(instance->init_state_.block(0, 0, 3, 1), (k - 2) * dt, &dis1.first, &dis1.second);
+                    o.get_dis_ellipsoid(state[k - 2].block(0, 0, 3, 1), (k - 1) * dt, &dis2.first, &dis2.second);
+                    o.get_dis_ellipsoid(state[k - 1].block(0, 0, 3, 1), (k) * dt, &dis3.first, &dis3.second);
+                    o.get_dis_ellipsoid(state[k].block(0, 0, 3, 1), (k + 1) * dt, &dis4.first, &dis4.second);
+                    double cbf = (dis4.first - 0.25) 
+                                + (gamma1 + gamma2 + gamma3 - 3) * (dis3.first - 0.25) 
+                                + ((gamma1 - 1) * (gamma2 + gamma3 - 2) + (gamma2 - 1) * (gamma3 - 1)) * (dis2.first - 0.25)
+                                + (gamma1 - 1) * (gamma2 - 1) * (gamma3 - 1) * (dis1.first - 0.25);
+                    if (cbf < 0.0) {
+                        double tmp = -cbf;
+                        cbf_cost += scale * tmp;
+                        cbf_cost_g.block(0, 0, u_dim_ * _n_step, 1) -= scale * (
+                            dis4.second.transpose() * state_g[k].block(0, 0, 3, u_dim_ * _n_step)
+                            + (gamma1 + gamma2 + gamma3 - 3) * dis3.second.transpose() * state_g[k - 1].block(0, 0, 3, u_dim_ * _n_step)
+                            + ((gamma1 - 1) * (gamma2 + gamma3 - 2) + (gamma2 - 1) * (gamma3 - 1)) * dis2.second.transpose() * state_g[k - 2].block(0, 0, 3, u_dim_ * _n_step)).transpose();
+                    }
+                } else {
+                    std::pair<double, Eigen::Vector3d> dis1, dis2, dis3, dis4;
+                    o.get_dis_ellipsoid(state[k - 3].block(0, 0, 3, 1), (k - 2) * dt, &dis1.first, &dis1.second);
+                    o.get_dis_ellipsoid(state[k - 2].block(0, 0, 3, 1), (k - 1) * dt, &dis2.first, &dis2.second);
+                    o.get_dis_ellipsoid(state[k - 1].block(0, 0, 3, 1), (k) * dt, &dis3.first, &dis3.second);
+                    o.get_dis_ellipsoid(state[k].block(0, 0, 3, 1), (k + 1) * dt, &dis4.first, &dis4.second);
+                    double cbf = (dis4.first - 0.25) 
+                                + (gamma1 + gamma2 + gamma3 - 3) * (dis3.first - 0.25) 
+                                + ((gamma1 - 1) * (gamma2 + gamma3 - 2) + (gamma2 - 1) * (gamma3 - 1)) * (dis2.first - 0.25)
+                                + (gamma1 - 1) * (gamma2 - 1) * (gamma3 - 1) * (dis1.first - 0.25);
+                    if (cbf < 0.0) {
+                        double tmp = -cbf;
+                        cbf_cost += scale * tmp;
+                        cbf_cost_g.block(0, 0, u_dim_ * _n_step, 1) -= scale * (
+                            dis4.second.transpose() * state_g[k].block(0, 0, 3, u_dim_ * _n_step)
+                            + (gamma1 + gamma2 + gamma3 - 3) * dis3.second.transpose() * state_g[k - 1].block(0, 0, 3, u_dim_ * _n_step)
+                            + ((gamma1 - 1) * (gamma2 + gamma3 - 2) + (gamma2 - 1) * (gamma3 - 1)) * dis2.second.transpose() * state_g[k - 2].block(0, 0, 3, u_dim_ * _n_step)
+                            + (gamma1 - 1) * (gamma2 - 1) * (gamma3 - 1) * dis1.second.transpose() * state_g[k - 3].block(0, 0, 3, u_dim_ * _n_step)).transpose();
+                    }
+                }
+            }
+        }
 #endif
+    }
+    // }
     instance->cbf_cost_ = cbf_cost;
 
     //calculate heading angle cost
@@ -355,7 +455,7 @@ double NominalMpcc::cost_func(const vector<double> &u, vector<double> &grad, Nom
     Matrix<double, u_dim_ * _n_step + _n_step + 1, 1> vcost_g;
     vcost_g.setZero();
     for (int k = 0; k < _n_step; k++) {
-        double tmp = pow(state[k][3], 2) + pow(state[k][4], 2) + pow(state[k][5], 2) - pow(15, 2);
+        double tmp = pow(state[k][3], 2) + pow(state[k][4], 2) + pow(state[k][5], 2) - pow(10, 2);
         if (tmp > 0) {
             vcost += tmp;
             vcost_g.block(0, 0, u_dim_ * _n_step, 1) += 2 * state[k][3] * state_g[k].block(3, 0, 1, u_dim_ * _n_step).transpose()
@@ -420,8 +520,9 @@ double NominalMpcc::cost_func(const vector<double> &u, vector<double> &grad, Nom
     //sum the above costs
     const double cw = cost_w[7];
     const double cbfw = cost_w[12];
-    double cost = cbfw * cbf_cost + cw * c_cost + cost_w[2] * t_cost + 0.15 * yawcost + 1.0 * vcost + ucost;
-    g += cbfw * cbf_cost_g + cw * c_cost_g + cost_w[2] * t_cost_g + 0.15 * yawcost_g + 1.0 * vcost_g;
+    double cost = 0;
+    cost = cbfw * cbf_cost + cw * c_cost + cost_w[2] * t_cost /*+ 0.15 * yawcost*/ + 1.0 * vcost + ucost;
+    g += cbfw * cbf_cost_g + cw * c_cost_g + cost_w[2] * t_cost_g /*+ 0.15 * yawcost_g*/ + 1.0 * vcost_g;
     double lag_cost = 0.0;
     double contour_cost = 0.0;
     for (int k = 0; k < _n_step + 1; k++) {
@@ -439,6 +540,7 @@ double NominalMpcc::cost_func(const vector<double> &u, vector<double> &grad, Nom
             g += cost_w[1] * lag_e_g[k];
         }
     }
+    
 
     for (int i = 0; i < grad.size(); i++) {
         grad[i] = g[i];
@@ -462,6 +564,7 @@ int NominalMpcc::solve(const Matrix<double, x_dim_, 1> &state,
     const double len,
     const Matrix<double, u_dim_, 1> last_u,
     const Vector3d disturbance_acc,
+    const vector<DynObs> &dynobs,
     Matrix<double, _n_step, u_dim_> &u, 
     Matrix<double, _n_step, x_dim_> &x_predict,
     Matrix<double, _n_step + 1, 1> &t_index,
@@ -527,8 +630,16 @@ int NominalMpcc::solve(const Matrix<double, x_dim_, 1> &state,
     t_max_ = t_max;
     last_u_ = last_u;
     disturbance_acc_ = disturbance_acc;
+    dynobs_ = &dynobs;
     for (int k = 0; k < _n_step; k++) {
         ref_u_.row(k) << 0, 0, 0, this->hover_ratio_;
+    }
+
+    if (past_disturbances_.size() >= 10) {
+        past_disturbances_.pop_back();
+        past_disturbances_.push_front(disturbance_acc);
+    } else {
+        past_disturbances_.push_front(disturbance_acc);
     }
 
     double minf;
@@ -536,12 +647,10 @@ int NominalMpcc::solve(const Matrix<double, x_dim_, 1> &state,
     try{
         flag = false;
         cnt = 0;
-        //solve optimization problem
         opt_.optimize(uv, minf);
         auto afterTime = chrono::steady_clock::now();
         solve_time = chrono::duration<double>(afterTime - beforeTime).count();
 
-        //get control inputs from optimization variables
         for (int k = 0; k < _n_step; k++) {
             u(k, 0) = uv[k * u_dim_ + 0];
             u(k, 1) = uv[k * u_dim_ + 1];
@@ -560,47 +669,86 @@ int NominalMpcc::solve(const Matrix<double, x_dim_, 1> &state,
     } catch(exception &e) {
         auto afterTime = chrono::steady_clock::now();
         solve_time = chrono::duration<double>(afterTime - beforeTime).count();
+        cout << "initial_state: " << state.transpose() << endl;
+        cout << "estimated_disturbance: " << disturbance_acc.transpose() << " norm: " << disturbance_acc.norm() << endl;
+        cout << "past estimated_disturbance: " << endl;
+        for (auto d : past_disturbances_) {
+            cout << "    " << d.transpose() << endl;
+        }
         cerr << "nlopt failed: " << e.what() << endl;
 
-        for (int k = 0; k < _n_step; k++) {
-            u(k, 0) = uv[k * u_dim_ + 0];
-            u(k, 1) = uv[k * u_dim_ + 1];
-            u(k, 2) = uv[k * u_dim_ + 2];
-            u(k, 3) = uv[k * u_dim_ + 3];
-        }
-        for (int k = 0; k < _n_step; k++) {
-            x_predict.row(k) = state_[k];
-        }
-        t_index[0] = uv[u_dim_ * _n_step + _n_step];
-        for (int k = 0; k < _n_step; k++) {
-            t_index[k + 1] = t_index[k] + uv[u_dim_ * _n_step + k];
-        }
+        // for (int k = 0; k < _n_step; k++) {
+        //     u(k, 0) = uv[k * u_dim_ + 0];
+        //     u(k, 1) = uv[k * u_dim_ + 1];
+        //     u(k, 2) = uv[k * u_dim_ + 2];
+        //     u(k, 3) = uv[k * u_dim_ + 3];
+        // }
+        // for (int k = 0; k < _n_step; k++) {
+        //     x_predict.row(k) = state_[k];
+        // }
+        // t_index[0] = uv[u_dim_ * _n_step + _n_step];
+        // for (int k = 0; k < _n_step; k++) {
+        //     t_index[k + 1] = t_index[k] + uv[u_dim_ * _n_step + k];
+        // }
 
-        uv = tmp_u_;
-        vector<double> grad(uv.size());
-        VectorXd grad2(uv.size());
-        flag = false;
-        double cost = cost_func(uv, grad, this);
-        double vub[_n_step * 3];
-        double vub_g[_n_step * 3 * (_n_step * u_dim_ + _n_step + 1)];
-        double vub_g2[_n_step * 3 * (_n_step * u_dim_ + _n_step + 1)];
-        flag = false;
-        for (int i = 0; i < uv.size(); i++) {
-            double delta = 1e-8;
-            vector<double> uv_new = uv;
-            uv_new[i] += delta;
-            vector<double> grad(uv.size());
-            double cost_new = cost_func(uv_new, grad, this);
-            double vub_new[_n_step * 3];
-            double vub_g[_n_step * 3 * (_n_step * u_dim_ + _n_step + 1)];
-            for (int j = 0; j < _n_step * 3; j++) {
-                vub_g2[j * uv.size() + i] = (vub_new[j] - vub[j]) / delta;
-            }
-            grad2[i] = (cost_new - cost) / delta;
-        }
-        
-        cout << "grad: " << fixed << setprecision(8) << endl << vector2Vector(grad).transpose() << endl;
-        cout << "grad2: " << fixed << setprecision(8) << endl << grad2.transpose() << endl;
+        // {
+        //     uv = tmp_u_;
+        //     vector<double> grad(uv.size());
+        //     VectorXd grad2(uv.size());
+        //     flag = false;
+        //     double cost = cost_func(uv, grad, this);
+        //     double vub[_n_step * 3];
+        //     double vub_g[_n_step * 3 * (_n_step * u_dim_ + _n_step + 1)];
+        //     double vub_g2[_n_step * 3 * (_n_step * u_dim_ + _n_step + 1)];
+        //     flag = false;
+        //     for (int i = 0; i < uv.size(); i++) {
+        //         double delta = 1e-4;
+        //         vector<double> uv_new = uv;
+        //         uv_new[i] += delta;
+        //         vector<double> grad(uv.size());
+        //         double cost_new = cost_func(uv_new, grad, this);
+        //         double vub_new[_n_step * 3];
+        //         double vub_g[_n_step * 3 * (_n_step * u_dim_ + _n_step + 1)];
+        //         for (int j = 0; j < _n_step * 3; j++) {
+        //             vub_g2[j * uv.size() + i] = (vub_new[j] - vub[j]) / delta;
+        //         }
+        //         grad2[i] = (cost_new - cost) / delta;
+        //     }
+            
+        //     cout << "grad: " << fixed << setprecision(8) << endl << vector2Vector(grad).transpose() << endl;
+        //     cout << "grad2: " << fixed << setprecision(8) << endl << grad2.transpose() << endl;
+        // }
+
+        // {
+        //     uv = tmp_u_;
+        //     vector<double> grad(uv.size());
+        //     VectorXd grad2(uv.size());
+        //     flag = true;
+        //     double cost = cost_func(uv, grad, this);
+        //     double vub[_n_step * 3];
+        //     double vub_g[_n_step * 3 * (_n_step * u_dim_ + _n_step + 1)];
+        //     double vub_g2[_n_step * 3 * (_n_step * u_dim_ + _n_step + 1)];
+        //     flag = true;
+        //     for (int i = 0; i < uv.size(); i++) {
+        //         double delta = 1e-4;
+        //         vector<double> uv_new = uv;
+        //         uv_new[i] += delta;
+        //         vector<double> grad(uv.size());
+        //         double cost_new = cost_func(uv_new, grad, this);
+        //         double vub_new[_n_step * 3];
+        //         double vub_g[_n_step * 3 * (_n_step * u_dim_ + _n_step + 1)];
+        //         for (int j = 0; j < _n_step * 3; j++) {
+        //             vub_g2[j * uv.size() + i] = (vub_new[j] - vub[j]) / delta;
+        //         }
+        //         grad2[i] = (cost_new - cost) / delta;
+        //     }
+        //     flag = false;
+            
+        //     cout << "grad: " << fixed << setprecision(8) << endl << vector2Vector(grad).transpose() << endl;
+        //     cout << "grad2: " << fixed << setprecision(8) << endl << grad2.transpose() << endl;
+        // }
+
+        // exit(0);
 
         return EXIT_FAILURE;
     }
