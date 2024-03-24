@@ -41,10 +41,12 @@ int main(int argc, char **argv) {
     cout << "MAX_VEL: " << MAX_VEL << " MAX_ACC: " << MAX_ACC << endl;
     double mu = atof(argv[6]);
     cout << "mu: " << mu << endl;
-    int test_num = atof(argv[7]);
+    int test_num = atoi(argv[7]);
     cout << "test_num: " << test_num << endl;
-    bool online_replan = atoi(argv[8]) == 1;
-    cout << "online replanning: " << (online_replan == true ? "ON" : "OFF") << endl;
+    double disturbance_force = atof(argv[8]);
+    cout << "external disturbance force: " << disturbance_force << " N" << endl;
+    bool online_replan = false;
+    // cout << "online replanning: " << (online_replan == true ? "ON" : "OFF") << endl;
 
     Logger logger(string(enable_dob == true ? "enable-DOB" : "disable-DOB") + "-"
         + string(enable_mpcc == true ? "enable-MPCC" : "disable-MPCC") + "-test");
@@ -218,9 +220,9 @@ int main(int argc, char **argv) {
 
         vector<DynObs> dynobs;
 
-        for (double p = 5; p < 45; p += 2.0) {
-            dynobs.push_back(DynObs(0.2, 1.0, Vector2d(p, 3), Vector2d(p, 7)));
-        }
+        // for (double p = 5; p < 45; p += 2.0) {
+        //     dynobs.push_back(DynObs(0.2, 1.0, Vector2d(p, 3), Vector2d(p, 7)));
+        // }
 
         auto t0 = chrono::steady_clock::now();
         
@@ -557,13 +559,13 @@ int main(int argc, char **argv) {
             logger.update();
 
             if (pos.x() > 30.0 && distur_time > 0) {//(pos.x() > 30.0 && distur_time > 0) {
-                distur_set[0] = 0.0;//min(1.0, distur_set[0] + 0.2);
-                distur_set[1] = 0.0;//min(1.0, distur_set[1] + 0.2);
+                distur_set[0] = disturbance_force / sqrt(2) / 4.0;
+                distur_set[1] = disturbance_force / sqrt(2) / 4.0;
                 distur_set[2] = 0.0;
                 distur_time--;
             } else {
-                distur_set[0] = 0.0;//max(0.0, distur_set[0] - 0.2);
-                distur_set[1] = 0.0;//max(0.0, distur_set[1] - 0.2);
+                distur_set[0] = 0.0;
+                distur_set[1] = 0.0;
                 distur_set[2] = 0.0;
             }
 
