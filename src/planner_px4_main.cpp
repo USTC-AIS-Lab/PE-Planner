@@ -52,12 +52,8 @@ int main(int argc, char **argv) {
     key_t key;
 	int shmId;
 	int i = 0;
-	const char *path = "~/IPC";
-	key = ftok(path, 1);
-	if(key == -1)
-	{
-		cout << "ftok failed" << endl;
-	}
+	key = 102988;
+    cout << "key=" << key << endl;
 	shmId = shmget(key, 0, 0);
 	cout << "shmId=" << shmId << endl;
 	if(shmId == -1)
@@ -571,7 +567,7 @@ int main(int argc, char **argv) {
                 distur_set[2] = 0.0;
             }
 
-            rate.sleep();
+            // rate.sleep();
             past_vel_stamp = vel_stamp;
             ros::spinOnce();
 

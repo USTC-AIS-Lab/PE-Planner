@@ -455,7 +455,7 @@ double NominalMpcc::cost_func(const vector<double> &u, vector<double> &grad, Nom
     Matrix<double, u_dim_ * _n_step + _n_step + 1, 1> vcost_g;
     vcost_g.setZero();
     for (int k = 0; k < _n_step; k++) {
-        double tmp = pow(state[k][3], 2) + pow(state[k][4], 2) + pow(state[k][5], 2) - pow(10, 2);
+        double tmp = pow(state[k][3], 2) + pow(state[k][4], 2) + pow(state[k][5], 2) - pow(15, 2);
         if (tmp > 0) {
             vcost += tmp;
             vcost_g.block(0, 0, u_dim_ * _n_step, 1) += 2 * state[k][3] * state_g[k].block(3, 0, 1, u_dim_ * _n_step).transpose()
@@ -608,7 +608,7 @@ int NominalMpcc::solve(const Matrix<double, x_dim_, 1> &state,
         lb[_n_step * u_dim_ + k] = 0.002 * 0.1 * (t_max - t_min) / len;
         ub[_n_step * u_dim_ + k] = 40.0 * 0.1 * (t_max - t_min) / len;
     }
-    lb[_n_step * u_dim_ + _n_step] = t_index[0] + 1e-3 > t_max ? t_max : (t_index[0] + 1e-3);
+    lb[_n_step * u_dim_ + _n_step] = t_min;//t_index[0] + 1e-3 > t_max ? t_max : (t_index[0] + 1e-3);
     ub[_n_step * u_dim_ + _n_step] = t_max;
     opt_.set_lower_bounds(lb);
     opt_.set_upper_bounds(ub);
