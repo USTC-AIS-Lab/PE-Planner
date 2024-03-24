@@ -669,13 +669,13 @@ int NominalMpcc::solve(const Matrix<double, x_dim_, 1> &state,
     } catch(exception &e) {
         auto afterTime = chrono::steady_clock::now();
         solve_time = chrono::duration<double>(afterTime - beforeTime).count();
-        cout << "initial_state: " << state.transpose() << endl;
-        cout << "estimated_disturbance: " << disturbance_acc.transpose() << " norm: " << disturbance_acc.norm() << endl;
-        cout << "past estimated_disturbance: " << endl;
-        for (auto d : past_disturbances_) {
-            cout << "    " << d.transpose() << endl;
-        }
-        cerr << "nlopt failed: " << e.what() << endl;
+        // cout << "initial_state: " << state.transpose() << endl;
+        // cout << "estimated_disturbance: " << disturbance_acc.transpose() << " norm: " << disturbance_acc.norm() << endl;
+        // cout << "past estimated_disturbance: " << endl;
+        // for (auto d : past_disturbances_) {
+        //     cout << "    " << d.transpose() << endl;
+        // }
+        // cerr << "nlopt failed: " << e.what() << endl;
 
         // for (int k = 0; k < _n_step; k++) {
         //     u(k, 0) = uv[k * u_dim_ + 0];
