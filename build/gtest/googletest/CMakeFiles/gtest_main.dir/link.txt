@@ -1,0 +1,1 @@
+/usr/bin/c++ -fPIC  -mavx -mfma -ffast-math -march=native -O3 -DNDEBUG  -shared -Wl,-soname,libgtest_main.so -o ../lib/libgtest_main.so CMakeFiles/gtest_main.dir/src/gtest_main.cc.o  -Wl,-rpath,/home/jiaxin/simulation_vedio_code/PE-Planner-final/build/gtest/lib ../lib/libgtest.so -lpthread 
