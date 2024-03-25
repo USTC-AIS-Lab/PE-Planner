@@ -1,1 +1,0 @@
-/usr/bin/c++ -fPIC  -mavx -mfma -ffast-math -march=native -O3 -DNDEBUG  -shared -Wl,-soname,libgmock.so -o ../lib/libgmock.so CMakeFiles/gmock.dir/src/gmock-all.cc.o  -Wl,-rpath,/home/jiaxin/simulation_vedio_code/PE-Planner-final/build/gtest/lib ../lib/libgtest.so -lpthread 
