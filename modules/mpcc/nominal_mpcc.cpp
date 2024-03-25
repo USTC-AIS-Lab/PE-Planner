@@ -576,31 +576,31 @@ int NominalMpcc::solve(const Matrix<double, x_dim_, 1> &state,
             t_index[k + 1] = t_index[k] + uv[u_dim_ * _n_step + k];
         }
 
-        uv = tmp_u_;
-        vector<double> grad(uv.size());
-        VectorXd grad2(uv.size());
-        flag = false;
-        double cost = cost_func(uv, grad, this);
-        double vub[_n_step * 3];
-        double vub_g[_n_step * 3 * (_n_step * u_dim_ + _n_step + 1)];
-        double vub_g2[_n_step * 3 * (_n_step * u_dim_ + _n_step + 1)];
-        flag = false;
-        for (int i = 0; i < uv.size(); i++) {
-            double delta = 1e-8;
-            vector<double> uv_new = uv;
-            uv_new[i] += delta;
-            vector<double> grad(uv.size());
-            double cost_new = cost_func(uv_new, grad, this);
-            double vub_new[_n_step * 3];
-            double vub_g[_n_step * 3 * (_n_step * u_dim_ + _n_step + 1)];
-            for (int j = 0; j < _n_step * 3; j++) {
-                vub_g2[j * uv.size() + i] = (vub_new[j] - vub[j]) / delta;
-            }
-            grad2[i] = (cost_new - cost) / delta;
-        }
+        // uv = tmp_u_;
+        // vector<double> grad(uv.size());
+        // VectorXd grad2(uv.size());
+        // flag = false;
+        // double cost = cost_func(uv, grad, this);
+        // double vub[_n_step * 3];
+        // double vub_g[_n_step * 3 * (_n_step * u_dim_ + _n_step + 1)];
+        // double vub_g2[_n_step * 3 * (_n_step * u_dim_ + _n_step + 1)];
+        // flag = false;
+        // for (int i = 0; i < uv.size(); i++) {
+        //     double delta = 1e-8;
+        //     vector<double> uv_new = uv;
+        //     uv_new[i] += delta;
+        //     vector<double> grad(uv.size());
+        //     double cost_new = cost_func(uv_new, grad, this);
+        //     double vub_new[_n_step * 3];
+        //     double vub_g[_n_step * 3 * (_n_step * u_dim_ + _n_step + 1)];
+        //     for (int j = 0; j < _n_step * 3; j++) {
+        //         vub_g2[j * uv.size() + i] = (vub_new[j] - vub[j]) / delta;
+        //     }
+        //     grad2[i] = (cost_new - cost) / delta;
+        // }
         
-        cout << "grad: " << fixed << setprecision(8) << endl << vector2Vector(grad).transpose() << endl;
-        cout << "grad2: " << fixed << setprecision(8) << endl << grad2.transpose() << endl;
+        // cout << "grad: " << fixed << setprecision(8) << endl << vector2Vector(grad).transpose() << endl;
+        // cout << "grad2: " << fixed << setprecision(8) << endl << grad2.transpose() << endl;
 
         return EXIT_FAILURE;
     }
