@@ -467,7 +467,7 @@ int main(int argc, char **argv) {
             fan_ang += M_PI / 180.0 * 10;
             ros::spinOnce();
         }
-        cout << "test num: " << i << endl;
+        cout << "test num: " << i << " fail_cnt: " << fail_cnt << endl;
     }
 
     px4.set_px4_mode("POSCTL");
