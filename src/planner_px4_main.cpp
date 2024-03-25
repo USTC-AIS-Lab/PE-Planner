@@ -549,8 +549,8 @@ int main(int argc, char **argv) {
             // ros_inte.publish_collision(collision_pos);
 
             for (auto &o : dynobs) {
-                // o.update((vel_stamp - past_vel_stamp).toSec());
-                o.update(0.02);
+                o.update((vel_stamp - past_vel_stamp).toSec());
+                // o.update(0.02);
             }
             ros_inte.publish_dyn_obs(dynobs);
 
