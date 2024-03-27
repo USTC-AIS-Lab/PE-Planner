@@ -4,6 +4,8 @@
 
 __Authors__: Jiaxin Qiu, Qingchen Liu, Jiahu Qin, Dewang Cheng, Yawei Tian and Qichao Ma
 
+Please give us a :star: if this project helps you! We will open source more.
+
 <p align="center">
   <img src="gif/github_video1.gif" width = "400" height = "225"/>
   <br>
