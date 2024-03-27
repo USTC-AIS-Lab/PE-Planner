@@ -51,8 +51,8 @@ Terminal 2:
 ```bash
 xhost +
 docker exec -it pe-planner /bin/bash
-git checkout static_env_simulation
 cd ~/pe-planner-simulation/PE-Planner
+git checkout static_env_simulation
 rviz -d ./rviz/rviz.rviz
 ```
 Terminal 3:
@@ -78,8 +78,8 @@ Terminal 2:
 ```bash
 xhost +
 docker exec -it pe-planner /bin/bash
-git checkout dynamic_env_simulation
 cd ~/pe-planner-simulation/PE-Planner
+git checkout dynamic_env_simulation
 rviz -d ./rviz/rviz.rviz
 ```
 Terminal 3:
@@ -104,8 +104,8 @@ Terminal 2:
 ```bash
 xhost +
 docker exec -it pe-planner /bin/bash
-git checkout disturbance_simulation
 cd ~/pe-planner-simulation/PE-Planner
+git checkout disturbance_simulation
 rviz -d ./rviz/rviz.rviz
 ```
 Terminal 3:
