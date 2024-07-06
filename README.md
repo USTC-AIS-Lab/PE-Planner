@@ -2,7 +2,7 @@
 
 **PE-Planner** is a performance-enhanced quadrotor motion planner for autonomous flight in complex and dynamic environments. It is proposed to significantly improve the performance of speed, safety, and disturbance rejection capability.
 
-__Authors__: Jiaxin Qiu, Qingchen Liu, Jiahu Qin, Dewang Cheng, Yawei Tian and Qichao Ma
+__Authors__: **Jiaxin Qiu** (Code Contributor), Qingchen Liu, Jiahu Qin, Dewang Cheng, Yawei Tian and Qichao Ma
 
 Please give us a :star: if this project helps you! We will open source more.
 
